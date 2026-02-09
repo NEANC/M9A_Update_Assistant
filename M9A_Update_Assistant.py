@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
-import configparser
-import logging
 import os
 import re
-import shutil
 import sys
-import urllib.request
-import urllib.error
-import zipfile
 import time
+import shutil
+import logging
+import zipfile
+import requests
+import configparser
+
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List
@@ -18,7 +18,7 @@ from typing import Optional, Dict, List
 
 LITE_ZIP_PATTERN = 'M9A-win-x86_64-v*-Lite.zip'
 FULL_ZIP_PATTERN = 'M9A-win-x86_64-v*-Full.zip'
-VERSION = "v1.0.0"
+VERSION = "v1.3.0"
 
 
 def print_info():
@@ -107,7 +107,7 @@ proxy =
             print(f"已生成默认配置文件: {self.config_file}")
             print("请修改配置文件后重新运行程序。")
             sys.exit(0)
-        except Exception as e:
+        except IOError as e:
             print(f"生成配置文件失败: {e}")
             sys.exit(1)
 
@@ -187,9 +187,17 @@ proxy =
         """
         备份 config 文件夹到临时文件夹
 
+        将 M9A 文件夹中的 config 文件夹复制到临时文件夹，以便在更新完成后恢复配置。
+
         Returns:
-            操作是否成功
+            bool: 操作是否成功
+
+        Raises:
+            IOError: 文件操作错误
+            OSError: 操作系统错误
+            shutil.Error: shutil 模块操作错误
         """
+
         m9a_config_path = Path(self.m9a_folder) / "config"
         temp_config_path = Path(self.temp_folder) / "config"
 
@@ -200,13 +208,11 @@ proxy =
         try:
             Path(self.temp_folder).mkdir(parents=True, exist_ok=True)
 
-            if temp_config_path.exists():
-                shutil.rmtree(temp_config_path)
-
-            shutil.copytree(m9a_config_path, temp_config_path)
+            # 使用 dirs_exist_ok=True 简化代码，避免先删除再复制
+            shutil.copytree(m9a_config_path, temp_config_path, dirs_exist_ok=True)
             self.logger.info(f"config 文件夹已备份到: {temp_config_path}")
             return True
-        except Exception as e:
+        except (IOError, OSError, shutil.Error) as e:
             self.logger.error(f"备份 config 文件夹失败: {e}")
             return False
 
@@ -214,9 +220,18 @@ proxy =
         """
         清理 M9A 文件夹中的所有文件
 
+        删除 M9A 文件夹中的所有文件和子文件夹，为解压新的版本做准备。
+        如果 M9A 文件夹不存在，则创建它。
+
         Returns:
-            操作是否成功
+            bool: 操作是否成功
+
+        Raises:
+            IOError: 文件操作错误
+            OSError: 操作系统错误
+            shutil.Error: shutil 模块操作错误
         """
+
         m9a_path = Path(self.m9a_folder)
 
         if not m9a_path.exists():
@@ -224,7 +239,7 @@ proxy =
             try:
                 m9a_path.mkdir(parents=True, exist_ok=True)
                 return True
-            except Exception as e:
+            except (IOError, OSError) as e:
                 self.logger.error(f"创建 M9A 文件夹失败: {e}")
                 return False
 
@@ -237,7 +252,7 @@ proxy =
 
             self.logger.info(f"M9A 文件夹已清理: {m9a_path}")
             return True
-        except Exception as e:
+        except (IOError, OSError, shutil.Error) as e:
             self.logger.error(f"清理 M9A 文件夹失败: {e}")
             return False
 
@@ -245,13 +260,21 @@ proxy =
         """
         解压 ZIP 文件并显示进度
 
+        解压指定的 ZIP 文件到目标路径，并在解压过程中显示进度信息。
+
         Args:
             zip_path: ZIP 文件路径
             extract_to: 解压目标路径
 
         Returns:
-            操作是否成功
+            bool: 操作是否成功
+
+        Raises:
+            zipfile.BadZipFile: ZIP 文件无效
+            IOError: 文件操作错误
+            OSError: 操作系统错误
         """
+
         if not os.path.exists(zip_path):
             self.logger.error(f"ZIP 文件不存在: {zip_path}")
             return False
@@ -280,7 +303,7 @@ proxy =
 
             self.logger.info(f"解压完成: {zip_path} -> {extract_to}")
             return True
-        except Exception as e:
+        except (zipfile.BadZipFile, IOError, OSError) as e:
             self.logger.error(f"解压 ZIP 文件失败: {e}")
             return False
 
@@ -288,9 +311,17 @@ proxy =
         """
         将 config 回写到 M9A 文件夹
 
+        将临时文件夹中的 config 文件夹复制回 M9A 文件夹，恢复之前备份的配置。
+
         Returns:
-            操作是否成功
+            bool: 操作是否成功
+
+        Raises:
+            IOError: 文件操作错误
+            OSError: 操作系统错误
+            shutil.Error: shutil 模块操作错误
         """
+
         temp_config_path = Path(self.temp_folder) / "config"
         m9a_config_path = Path(self.m9a_folder) / "config"
 
@@ -299,13 +330,11 @@ proxy =
             return False
 
         try:
-            if m9a_config_path.exists():
-                shutil.rmtree(m9a_config_path)
-
-            shutil.copytree(temp_config_path, m9a_config_path)
+            # 使用 dirs_exist_ok=True 简化代码，避免先删除再复制
+            shutil.copytree(temp_config_path, m9a_config_path, dirs_exist_ok=True)
             self.logger.info(f"config 文件夹已回写到: {m9a_config_path}")
             return True
-        except Exception as e:
+        except (IOError, OSError, shutil.Error) as e:
             self.logger.error(f"回写 config 文件夹失败: {e}")
             return False
 
@@ -313,9 +342,18 @@ proxy =
         """
         清理临时文件夹
 
+        删除临时文件夹及其所有内容，释放磁盘空间。
+
         Returns:
-            操作是否成功
+            bool: 操作是否成功
+
+        Raises:
+            PermissionError: 权限被拒绝
+            IOError: 文件操作错误
+            OSError: 操作系统错误
+            shutil.Error: shutil 模块操作错误
         """
+
         temp_path = Path(self.temp_folder)
 
         if not temp_path.exists():
@@ -329,7 +367,7 @@ proxy =
         except PermissionError as e:
             self.logger.error(f"清理临时文件夹失败: 权限被拒绝 - {e}")
             return False
-        except Exception as e:
+        except (IOError, OSError, shutil.Error) as e:
             self.logger.error(f"清理临时文件夹失败: {e}")
             return False
 
@@ -337,12 +375,20 @@ proxy =
         """
         检查 Lite ZIP 文件中是否包含 deps 文件夹
 
+        检查指定的 Lite ZIP 文件中是否包含 deps 文件夹，以确定是否需要从 Full ZIP 文件中提取 deps 文件夹。
+
         Args:
             zip_path: Lite ZIP 文件路径
 
         Returns:
-            是否包含 deps 文件夹
+            bool: 是否包含 deps 文件夹
+
+        Raises:
+            zipfile.BadZipFile: ZIP 文件无效
+            IOError: 文件操作错误
+            OSError: 操作系统错误
         """
+
         try:
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 for file_name in zip_ref.namelist():
@@ -351,7 +397,7 @@ proxy =
                         return True
                 self.logger.info(f"Lite ZIP 文件中不包含 deps 文件夹: {zip_path}")
                 return False
-        except Exception as e:
+        except (zipfile.BadZipFile, IOError, OSError) as e:
             self.logger.error(f"检查 Lite ZIP 文件失败: {e}")
             return False
 
@@ -359,32 +405,27 @@ proxy =
         """
         获取 GitHub 最新 release 信息
 
+        从 GitHub API 获取指定仓库的最新 release 信息。
+
         Returns:
-            release 信息字典，如果获取失败则返回 None
+            Dict: release 信息字典，如果获取失败则返回 None
+
+        Raises:
+            requests.RequestException: 网络请求错误
         """
+
         try:
-            req = urllib.request.Request(self.github_api_url)
-            req.add_header('User-Agent', 'M9A-Update-Assistant')
-
-            proxy_handler = None
-            if self.github_proxy:
-                proxy_handler = urllib.request.ProxyHandler({'http': self.github_proxy, 'https': self.github_proxy})
-
-            opener = urllib.request.build_opener(proxy_handler) if proxy_handler else urllib.request.build_opener()
-            urllib.request.install_opener(opener)
-
-            with opener.open(req, timeout=30) as response:
-                data = response.read().decode('utf-8')
-                import json
-                release_info = json.loads(data)
-
-                self.logger.info(f"获取到最新版本: {release_info.get('tag_name', 'Unknown')}")
-                return release_info
-        except urllib.error.URLError as e:
+            headers = {'User-Agent': 'M9A-Update-Assistant'}
+            proxies = {'http': self.github_proxy, 'https': self.github_proxy} if self.github_proxy else None
+            
+            response = requests.get(self.github_api_url, headers=headers, proxies=proxies, timeout=30)
+            response.raise_for_status()  # 抛出 HTTP 错误
+            
+            release_info = response.json()
+            self.logger.info(f"获取到最新版本: {release_info.get('tag_name', 'Unknown')}")
+            return release_info
+        except requests.RequestException as e:
             self.logger.error(f"获取 GitHub release 信息失败: {e}")
-            return None
-        except json.JSONDecodeError as e:
-            self.logger.error(f"解析 GitHub release 信息失败: {e}")
             return None
         except Exception as e:
             self.logger.error(f"获取 GitHub release 信息时发生错误: {e}")
@@ -414,13 +455,22 @@ proxy =
         """
         下载文件并显示进度
 
+        从指定的 URL 下载文件到保存路径，并在下载过程中显示进度信息。
+        如果下载失败，会自动重试指定次数。
+
         Args:
             url: 下载 URL
             save_path: 保存路径
 
         Returns:
-            操作是否成功
+            bool: 操作是否成功
+
+        Raises:
+            requests.RequestException: 网络请求错误
+            IOError: 文件操作错误
+            OSError: 操作系统错误
         """
+
         max_retries = 4
         retry_interval = 10  # 10秒
 
@@ -434,17 +484,13 @@ proxy =
             try:
                 Path(save_path).parent.mkdir(parents=True, exist_ok=True)
 
-                req = urllib.request.Request(url)
-                req.add_header('User-Agent', 'M9A-Update-Assistant')
+                headers = {'User-Agent': 'M9A-Update-Assistant'}
+                proxies = {'http': self.github_proxy, 'https': self.github_proxy} if self.github_proxy else None
 
-                proxy_handler = None
-                if self.github_proxy:
-                    proxy_handler = urllib.request.ProxyHandler({'http': self.github_proxy, 'https': self.github_proxy})
-
-                opener = urllib.request.build_opener(proxy_handler) if proxy_handler else urllib.request.build_opener()
-
-                with opener.open(req, timeout=60) as response:
-                    total_size = int(response.getheader('Content-Length', 0))
+                with requests.get(url, headers=headers, proxies=proxies, timeout=60, stream=True) as response:
+                    response.raise_for_status()  # 抛出 HTTP 错误
+                    
+                    total_size = int(response.headers.get('Content-Length', 0))
                     downloaded_size = 0
 
                     if total_size > 0:
@@ -452,31 +498,27 @@ proxy =
 
                     with open(save_path, 'wb') as f:
                         chunk_size = 8192
-                        while True:
-                            chunk = response.read(chunk_size)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                            downloaded_size += len(chunk)
+                        for chunk in response.iter_content(chunk_size=chunk_size):
+                            if chunk:
+                                f.write(chunk)
+                                downloaded_size += len(chunk)
 
-                            if total_size > 0:
-                                progress = (downloaded_size / total_size) * 100
-                                downloaded_mb = downloaded_size / (1024 * 1024)
-                                total_mb = total_size / (1024 * 1024)
-                                print(f"\r下载进度: {progress:.1f}% ({downloaded_mb:.2f} MB / {total_mb:.2f} MB)", end="", flush=True)
+                                if total_size > 0:
+                                    progress = (downloaded_size / total_size) * 100
+                                    downloaded_mb = downloaded_size / (1024 * 1024)
+                                    total_mb = total_size / (1024 * 1024)
+                                    print(f"\r下载进度: {progress:.1f}% ({downloaded_mb:.2f} MB / {total_mb:.2f} MB)", end="", flush=True)
 
                     # 清理进度条输出行
                     print("\r" + " " * 80 + "\r", end="", flush=True)
 
                     self.logger.info(f"下载完成: {save_path}")
                     return True
-            except urllib.error.URLError as e:
+            except requests.RequestException as e:
                 self.logger.error(f"下载文件失败: {e}")
                 if attempt < max_retries - 1:
                     self.logger.info(f"等待 {retry_interval} 秒后重试...")
                     time.sleep(retry_interval)
-                    # 重置 opener 以断开连接
-                    urllib.request.install_opener(urllib.request.build_opener())
                     continue
                 else:
                     return False
@@ -519,7 +561,7 @@ proxy =
             lite_save_path = download_dir / lite_filename
             
             # 检查临时文件夹中是否存在对应版本的 Lite ZIP
-            lite_files = list(download_dir.glob(f"M9A-win-x86_64-v{version_pattern}-Lite.zip"))
+            lite_files = list(download_dir.glob(LITE_ZIP_PATTERN.replace('*', version_pattern)))
             if lite_files:
                 self.logger.info(f"临时文件夹中已存在最新版本的 Lite ZIP: {lite_files[0]}")
                 downloaded_files.append(str(lite_files[0]))
@@ -552,7 +594,7 @@ proxy =
             full_save_path = download_dir / full_filename
             
             # 检查临时文件夹中是否存在对应版本的 Full ZIP
-            full_files = list(download_dir.glob(f"M9A-win-x86_64-v{version_pattern}-Full.zip"))
+            full_files = list(download_dir.glob(FULL_ZIP_PATTERN.replace('*', version_pattern)))
             if full_files:
                 self.logger.info(f"临时文件夹中已存在最新版本的 Full ZIP: {full_files[0]}")
                 downloaded_files.append(str(full_files[0]))
@@ -647,7 +689,7 @@ proxy =
             lite_save_path = download_dir / lite_filename
             
             # 检查临时文件夹中是否存在对应版本的 Lite ZIP
-            lite_files = list(download_dir.glob(f"M9A-win-x86_64-v{version_pattern}-Lite.zip"))
+            lite_files = list(download_dir.glob(LITE_ZIP_PATTERN.replace('*', version_pattern)))
             if lite_files:
                 self.logger.info(f"临时文件夹中已存在最新版本的 Lite ZIP: {lite_files[0]}")
                 
@@ -692,7 +734,7 @@ proxy =
             full_save_path = download_dir / full_filename
             
             # 检查临时文件夹中是否存在对应版本的 Full ZIP
-            full_files = list(download_dir.glob(f"M9A-win-x86_64-v{version_pattern}-Full.zip"))
+            full_files = list(download_dir.glob(FULL_ZIP_PATTERN.replace('*', version_pattern)))
             if full_files:
                 self.logger.info(f"临时文件夹中已存在最新版本的 Full ZIP: {full_files[0]}")
                 
@@ -744,13 +786,14 @@ proxy =
                 actual_sha256 = self._calculate_sha256(zip_path)
                 if actual_sha256 != expected_sha256:
                     self.logger.error(f"SHA256 校验失败:\n"
-                                      f"GitHub:{expected_sha256}\n"
-                                      f"本地:{actual_sha256}")
+                                      f"GitHub: {expected_sha256}\n"
+                                      f"本地:   {actual_sha256}")
                     return False
                 else:
-                    self.logger.info(f"SHA256 校验成功\n"
-                                     f"GitHub:{expected_sha256}\n"
-                                     f"本地:{actual_sha256}")
+                    self.logger.info(f"SHA256 校验成功：\n"
+                                      f"GitHub: {expected_sha256}\n"
+                                      f"本地:   {actual_sha256}")
+
             else:
                 self.logger.info("未找到 SHA256 校验值，仅验证文件格式")
             
@@ -758,7 +801,7 @@ proxy =
         except zipfile.BadZipFile:
             self.logger.error(f"无效的 ZIP 文件: {zip_path}")
             return False
-        except Exception as e:
+        except (IOError, OSError) as e:
             self.logger.error(f"验证 ZIP 文件失败: {e}")
             return False
 
@@ -783,7 +826,7 @@ proxy =
 
             for search_dir in search_dirs:
                 if search_dir.exists():
-                    full_zip_files.extend([f for f in search_dir.glob("M9A-win-x86_64-v*-Full.zip") if full_zip_regex.match(f.name)])
+                    full_zip_files.extend([f for f in search_dir.glob(FULL_ZIP_PATTERN) if full_zip_regex.match(f.name)])
 
             if not full_zip_files:
                 self.logger.warning(f"未找到匹配的 Full ZIP 文件: {self.full_zip_pattern}")
@@ -823,7 +866,7 @@ proxy =
 
             self.logger.info(f"deps 文件夹已提取到: {m9a_path}")
             return True
-        except Exception as e:
+        except (zipfile.BadZipFile, IOError, OSError) as e:
             self.logger.error(f"提取 deps 文件夹失败: {e}")
             return False
 
@@ -843,7 +886,7 @@ proxy =
 
         for search_dir in search_dirs:
             if search_dir.exists():
-                lite_zip_files.extend([f for f in search_dir.glob("M9A-win-x86_64-v*-Lite.zip") if lite_zip_regex.match(f.name)])
+                lite_zip_files.extend([f for f in search_dir.glob(LITE_ZIP_PATTERN) if lite_zip_regex.match(f.name)])
 
         if not lite_zip_files:
             self.logger.warning(f"未找到匹配的 Lite ZIP 文件: {self.lite_zip_pattern}")
@@ -855,9 +898,20 @@ proxy =
         """
         执行完整的更新流程
 
+        执行完整的 M9A 更新流程，包括：
+        1. 从 GitHub 获取最新版本信息
+        2. 下载 Lite 和 Full ZIP 文件
+        3. 备份配置文件
+        4. 清理 M9A 文件夹
+        5. 解压 Lite ZIP 文件
+        6. 恢复配置文件
+        7. 从 Full ZIP 文件中提取 deps 文件夹（如果需要）
+        8. 清理临时文件夹
+
         Returns:
-            操作是否成功
+            bool: 操作是否成功
         """
+
         lite_zip = None
         full_zip = None
 

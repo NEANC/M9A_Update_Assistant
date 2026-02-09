@@ -1,0 +1,6 @@
+# M9A Update Assistant 依赖项
+# 用于网络请求
+requests>=2.32.3
+
+# 用于支持 SOCKS 代理
+PySocks>=1.7.1
