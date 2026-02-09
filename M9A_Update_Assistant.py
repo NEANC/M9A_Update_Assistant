@@ -18,7 +18,7 @@ from typing import Optional, Dict, List
 
 LITE_ZIP_PATTERN = 'M9A-win-x86_64-v*-Lite.zip'
 FULL_ZIP_PATTERN = 'M9A-win-x86_64-v*-Full.zip'
-VERSION = "v1.3.0"
+VERSION = "v1.3.1"
 
 
 def print_info():

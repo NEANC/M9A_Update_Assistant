@@ -167,7 +167,7 @@ jobs:
           assume-yes-for-downloads: true
           follow-imports: true
           output-dir: build
-          include-package: requests,PySocks
+          include-package: requests,socks
           no-deployment-flag: self-execution
           nofollow-import-to: '*.tests'
 
