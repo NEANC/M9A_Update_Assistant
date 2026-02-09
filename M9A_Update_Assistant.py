@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import time
+import zlib
 import shutil
 import logging
 import zipfile
@@ -18,7 +19,7 @@ from typing import Optional, Dict, List
 
 LITE_ZIP_PATTERN = 'M9A-win-x86_64-v*-Lite.zip'
 FULL_ZIP_PATTERN = 'M9A-win-x86_64-v*-Full.zip'
-VERSION = "v1.3.1"
+VERSION = "v1.5.2"
 
 
 def print_info():
@@ -76,8 +77,8 @@ class M9AUpdateAssistant:
         生成默认配置文件
         """
         default_config = r"""[Paths]
-# M9A 文件夹路径
-m9a_folder = Z:\M9A
+# M9A 文件夹路径（多个路径用逗号分隔）
+m9a_folders = Z:\M9A
 
 # 临时文件夹路径
 temp_folder = Z:\Temp\M9A-Update-Assistant
@@ -119,7 +120,8 @@ proxy =
 
         self.config.read(self.config_file, encoding='utf-8')
 
-        self.m9a_folder = self.config.get('Paths', 'm9a_folder', fallback='Z:\\M9A')
+        m9a_folders_str = self.config.get('Paths', 'm9a_folders', fallback='Z:\\M9A')
+        self.m9a_folders = [folder.strip() for folder in m9a_folders_str.split(',') if folder.strip()]
         self.temp_folder = self.config.get('Paths', 'temp_folder', fallback='Z:\\Temp\\M9A-Update-Assistant')
         self.lite_zip_pattern = LITE_ZIP_PATTERN
         self.full_zip_pattern = FULL_ZIP_PATTERN
@@ -183,11 +185,14 @@ proxy =
             except Exception as e:
                 self.logger.warning(f"删除日志文件 {log_file} 失败: {e}")
 
-    def backup_config(self) -> bool:
+    def backup_config(self, m9a_folder: str) -> bool:
         """
         备份 config 文件夹到临时文件夹
 
         将 M9A 文件夹中的 config 文件夹复制到临时文件夹，以便在更新完成后恢复配置。
+
+        Args:
+            m9a_folder: M9A 文件夹路径
 
         Returns:
             bool: 操作是否成功
@@ -197,9 +202,11 @@ proxy =
             OSError: 操作系统错误
             shutil.Error: shutil 模块操作错误
         """
-
-        m9a_config_path = Path(self.m9a_folder) / "config"
-        temp_config_path = Path(self.temp_folder) / "config"
+        m9a_config_path = Path(m9a_folder) / "config"
+        # 为每个 M9A 路径创建独立的备份目录
+        # 使用路径的哈希值作为目录名，确保唯一性
+        path_hash = zlib.crc32(m9a_folder.encode()) & 0xffffffff
+        temp_config_path = Path(self.temp_folder) / f"config_{path_hash:08x}"
 
         if not m9a_config_path.exists():
             self.logger.warning(f"M9A 文件夹中的 config 文件夹不存在: {m9a_config_path}")
@@ -216,12 +223,15 @@ proxy =
             self.logger.error(f"备份 config 文件夹失败: {e}")
             return False
 
-    def clean_m9a_folder(self) -> bool:
+    def clean_m9a_folder(self, m9a_folder: str) -> bool:
         """
         清理 M9A 文件夹中的所有文件
 
         删除 M9A 文件夹中的所有文件和子文件夹，为解压新的版本做准备。
         如果 M9A 文件夹不存在，则创建它。
+
+        Args:
+            m9a_folder: M9A 文件夹路径
 
         Returns:
             bool: 操作是否成功
@@ -232,7 +242,7 @@ proxy =
             shutil.Error: shutil 模块操作错误
         """
 
-        m9a_path = Path(self.m9a_folder)
+        m9a_path = Path(m9a_folder)
 
         if not m9a_path.exists():
             self.logger.info(f"M9A 文件夹不存在，正在创建: {m9a_path}")
@@ -307,11 +317,14 @@ proxy =
             self.logger.error(f"解压 ZIP 文件失败: {e}")
             return False
 
-    def restore_config(self) -> bool:
+    def restore_config(self, m9a_folder: str) -> bool:
         """
         将 config 回写到 M9A 文件夹
 
         将临时文件夹中的 config 文件夹复制回 M9A 文件夹，恢复之前备份的配置。
+
+        Args:
+            m9a_folder: M9A 文件夹路径
 
         Returns:
             bool: 操作是否成功
@@ -322,8 +335,10 @@ proxy =
             shutil.Error: shutil 模块操作错误
         """
 
-        temp_config_path = Path(self.temp_folder) / "config"
-        m9a_config_path = Path(self.m9a_folder) / "config"
+        # 使用路径的哈希值找到对应的备份目录
+        path_hash = zlib.crc32(m9a_folder.encode()) & 0xffffffff
+        temp_config_path = Path(self.temp_folder) / f"config_{path_hash:08x}"
+        m9a_config_path = Path(m9a_folder) / "config"
 
         if not temp_config_path.exists():
             self.logger.warning(f"临时文件夹中的 config 文件夹不存在: {temp_config_path}")
@@ -331,6 +346,7 @@ proxy =
 
         try:
             # 使用 dirs_exist_ok=True 简化代码，避免先删除再复制
+            self.logger.info(f"config 文件夹正在回写：{temp_config_path} -> {m9a_config_path}")
             shutil.copytree(temp_config_path, m9a_config_path, dirs_exist_ok=True)
             self.logger.info(f"config 文件夹已回写到: {m9a_config_path}")
             return True
@@ -805,12 +821,13 @@ proxy =
             self.logger.error(f"验证 ZIP 文件失败: {e}")
             return False
 
-    def extract_deps_from_full_zip(self, full_zip_path: Optional[str] = None) -> bool:
+    def extract_deps_from_full_zip(self, full_zip_path: Optional[str] = None, m9a_folder: Optional[str] = None) -> bool:
         """
         从 Full ZIP 文件中提取 deps 文件夹到 M9A 文件夹
 
         Args:
             full_zip_path: Full ZIP 文件路径，如果为 None 则从当前目录查找
+            m9a_folder: M9A 文件夹路径，如果为 None 则使用默认路径
 
         Returns:
             操作是否成功
@@ -837,7 +854,7 @@ proxy =
         self.logger.info(f"找到 Full ZIP 文件: {full_zip_file}")
 
         try:
-            m9a_path = Path(self.m9a_folder)
+            m9a_path = Path(m9a_folder) if m9a_folder else Path(self.m9a_folders[0])
             m9a_path.mkdir(parents=True, exist_ok=True)
 
             with zipfile.ZipFile(full_zip_file, 'r') as zip_ref:
@@ -901,12 +918,13 @@ proxy =
         执行完整的 M9A 更新流程，包括：
         1. 从 GitHub 获取最新版本信息
         2. 下载 Lite 和 Full ZIP 文件
-        3. 备份配置文件
-        4. 清理 M9A 文件夹
-        5. 解压 Lite ZIP 文件
-        6. 恢复配置文件
-        7. 从 Full ZIP 文件中提取 deps 文件夹（如果需要）
-        8. 清理临时文件夹
+        3. 对每个 M9A 执行：
+           - 备份配置文件
+           - 清理 M9A 文件夹
+           - 解压 Lite ZIP 文件
+           - 恢复配置文件
+           - 从 Full ZIP 文件中提取 deps 文件夹（如果需要）
+        4. 清理临时文件夹
 
         Returns:
             bool: 操作是否成功
@@ -935,25 +953,6 @@ proxy =
 
         self.logger.info(f"使用 Lite ZIP 文件: {lite_zip}")
 
-        # 备份 config（如果存在）
-        config_backup_successful = self.backup_config()
-        if not config_backup_successful:
-            self.logger.info("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
-
-        if not self.clean_m9a_folder():
-            self.logger.critical("清理 M9A 文件夹失败，更新终止")
-            return False
-
-        if not self.extract_zip_with_progress(lite_zip, self.m9a_folder):
-            self.logger.critical("解压 Lite ZIP 失败，更新终止")
-            return False
-
-        # 回写 config（如果之前备份成功）
-        if config_backup_successful:
-            if not self.restore_config():
-                self.logger.critical("回写 config 失败")
-                return False
-
         # 检查是否需要提取 deps 文件夹
         need_extract_deps = True
         if self.check_lite_zip_has_deps(lite_zip):
@@ -963,20 +962,54 @@ proxy =
             need_extract_deps = False
             self.logger.info("未找到 Full ZIP 文件，跳过 deps 提取")
 
-        # 提取 deps 文件夹
-        if need_extract_deps:
-            if not self.extract_deps_from_full_zip(full_zip):
-                self.logger.critical("提取 deps 文件夹失败")
-                return False
+        # 遍历所有 M9A
+        all_success = True
+        for index, m9a_folder in enumerate(self.m9a_folders, 1):
+            self.logger.info(f"开始更新第 {index}/{len(self.m9a_folders)} 个 M9A: {m9a_folder}")
 
+            # 备份 config（如果存在）
+            config_backup_successful = self.backup_config(m9a_folder)
+            if not config_backup_successful:
+                self.logger.info("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
+
+            if not self.clean_m9a_folder(m9a_folder):
+                self.logger.critical(f"清理 M9A 文件夹失败: {m9a_folder}")
+                all_success = False
+                continue
+
+            if not self.extract_zip_with_progress(lite_zip, m9a_folder):
+                self.logger.critical(f"解压 Lite ZIP 失败: {m9a_folder}")
+                all_success = False
+                continue
+
+            # 回写 config（如果之前备份成功）
+            if config_backup_successful:
+                if not self.restore_config(m9a_folder):
+                    self.logger.critical(f"回写 config 失败: {m9a_folder}")
+                    all_success = False
+                    continue
+
+            # 提取 deps 文件夹
+            if need_extract_deps:
+                if not self.extract_deps_from_full_zip(full_zip, m9a_folder):
+                    self.logger.critical(f"提取 deps 文件夹失败: {m9a_folder}")
+                    all_success = False
+                    continue
+
+            self.logger.info(f"M9A 更新完成: {m9a_folder}")
+
+        # 所有 M9A 更新完成后，清理临时文件夹
         if not self.clean_temp_folder():
             self.logger.warning("无法清理临时文件夹")
 
         self._cleanup_old_logs()
 
-        self.logger.info("M9A 完成更新")
+        if all_success:
+            self.logger.info("所有 M9A 完成更新")
+        else:
+            self.logger.warning("部分 M9A 更新失败")
 
-        return True
+        return all_success
 
 
 def main():
