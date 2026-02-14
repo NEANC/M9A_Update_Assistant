@@ -125,9 +125,20 @@ release_version = release
 
         self.config.read(self.config_file, encoding='utf-8')
 
-        m9a_folders_str = self.config.get('Paths', 'm9a_folders', fallback='Z:\\M9A')
-        self.m9a_folders = [folder.strip() for folder in m9a_folders_str.split(',') if folder.strip()]
-        self.temp_folder = self.config.get('Paths', 'temp_folder', fallback='Z:\\Temp\\M9A-Update-Assistant')
+        m9a_folders_str = self.config.get('Paths', 'm9a_folders')
+
+        if m9a_folders_str:
+            self.m9a_folders = [folder.strip() for folder in m9a_folders_str.split(',') if folder.strip()]
+        else:
+            self.m9a_folders = []
+
+        temp_folder_config = self.config.get('Paths', 'temp_folder', fallback='Temp')
+
+        if temp_folder_config == 'Temp':
+            # 使用程序目录的 Temp 文件夹
+            self.temp_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Temp')
+        else:
+            self.temp_folder = temp_folder_config
         self.lite_zip_pattern = LITE_ZIP_PATTERN
         self.full_zip_pattern = FULL_ZIP_PATTERN
         self.log_max_files = self.config.getint('Logs', 'max_files', fallback=15)
@@ -147,6 +158,46 @@ release_version = release
 
         if self.log_save_enabled:
             self._setup_file_logger()
+
+    def validate_config(self) -> bool:
+        """
+        验证配置文件是否合法
+
+        Returns:
+            bool: 配置是否合法
+        """
+        # 验证 m9a_folders
+        if not self.m9a_folders:
+            self.logger.error("配置错误: M9A 文件夹路径未配置")
+            self.logger.error("请在配置文件中设置 m9a_folders 字段")
+            return False
+
+        # 验证 m9a_folders 中的路径
+        for folder in self.m9a_folders:
+            if not os.path.exists(folder):
+                self.logger.warning(f"M9A 文件夹路径不存在: {folder}")
+                self.logger.warning("程序将尝试创建该文件夹")
+
+        # 验证 temp_folder
+        try:
+            temp_path = Path(self.temp_folder)
+            temp_path.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"临时文件夹路径: {self.temp_folder}")
+        except Exception as e:
+            self.logger.error(f"临时文件夹路径错误: {e}")
+            return False
+
+        # 验证 GitHub 配置
+        if not self.github_repo:
+            self.logger.error("配置错误: GitHub 仓库地址未配置")
+            return False
+
+        if self.github_release_version not in ['release', 'latest']:
+            self.logger.error(f"配置错误: 未知的 Release 版本类型: {self.github_release_version}")
+            return False
+
+        self.logger.info("配置验证通过")
+        return True
 
     def _setup_file_logger(self) -> None:
         """设置文件日志记录器"""
@@ -585,7 +636,7 @@ release_version = release
             return None
 
         tag_name = release_info.get('tag_name', 'latest')
-        download_dir = Path(self.temp_folder)
+        download_dir = Path(self.temp_folder) / "ZIP"
         download_dir.mkdir(parents=True, exist_ok=True)
 
         lite_url = self.find_download_url(release_info, self.lite_zip_pattern)
@@ -713,7 +764,7 @@ release_version = release
             return None
 
         tag_name = release_info.get('tag_name', 'latest')
-        download_dir = Path(self.temp_folder)
+        download_dir = Path(self.temp_folder) / "ZIP"
         download_dir.mkdir(parents=True, exist_ok=True)
 
         lite_url = self.find_download_url(release_info, self.lite_zip_pattern)
@@ -1042,6 +1093,12 @@ def main():
     try:
         print_info()
         assistant = M9AUpdateAssistant()
+        
+        # 验证配置
+        if not assistant.validate_config():
+            assistant.logger.critical("错误的配置，请修改配置文件后重新运行。")
+            sys.exit(1)
+        
         success = assistant.run_update()
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:
