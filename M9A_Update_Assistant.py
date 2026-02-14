@@ -14,12 +14,10 @@ import configparser
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 
-LITE_ZIP_PATTERN = 'M9A-win-x86_64-v*-Lite.zip'
-FULL_ZIP_PATTERN = 'M9A-win-x86_64-v*-Full.zip'
-VERSION = "v1.6.0"
+VERSION = "v1.7.0"
 
 
 def print_info():
@@ -139,8 +137,8 @@ release_version = release
             self.temp_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Temp')
         else:
             self.temp_folder = temp_folder_config
-        self.lite_zip_pattern = LITE_ZIP_PATTERN
-        self.full_zip_pattern = FULL_ZIP_PATTERN
+        self.cli_zip_pattern = ''
+        self.gui_zip_pattern = ''
         self.log_max_files = self.config.getint('Logs', 'max_files', fallback=15)
         self.log_save_enabled = self.config.getboolean('Logs', 'save_enabled', fallback=True)
 
@@ -447,12 +445,12 @@ release_version = release
 
     def check_lite_zip_has_deps(self, zip_path: str) -> bool:
         """
-        检查 Lite ZIP 文件中是否包含 deps 文件夹
+        检查 CLI ZIP 文件中是否包含 deps 文件夹
 
-        检查指定的 Lite ZIP 文件中是否包含 deps 文件夹，以确定是否需要从 Full ZIP 文件中提取 deps 文件夹。
+        检查指定的 CLI ZIP 文件中是否包含 deps 文件夹，以确定是否需要从 GUI ZIP 文件中提取 deps 文件夹。
 
         Args:
-            zip_path: Lite ZIP 文件路径
+            zip_path: CLI ZIP 文件路径
 
         Returns:
             bool: 是否包含 deps 文件夹
@@ -467,12 +465,12 @@ release_version = release
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 for file_name in zip_ref.namelist():
                     if file_name.startswith('deps/'):
-                        self.logger.info(f"Lite ZIP 文件中存在 deps 文件夹")
+                        self.logger.info(f"CLI ZIP 文件中存在 deps 文件夹")
                         return True
-                self.logger.warning(f"Lite ZIP 文件中不包含 deps 文件夹")
+                self.logger.warning(f"CLI ZIP 文件中不包含 deps 文件夹")
                 return False
         except (zipfile.BadZipFile, IOError, OSError) as e:
-            self.logger.error(f"检查 Lite ZIP 文件失败: {e}")
+            self.logger.error(f"检查 CLI ZIP 文件失败: {e}")
             return False
 
     def get_latest_release_info(self) -> Optional[Dict]:
@@ -522,25 +520,106 @@ release_version = release
             self.logger.error(f"获取 GitHub release 信息时发生错误: {e}")
             return None
 
-    def find_download_url(self, release_info: Dict, pattern: str) -> Optional[str]:
+    def parse_release_keywords(self, release_info: Dict) -> Dict[str, Any]:
+        """
+        解析 release 的 body 字段，提取 CLI 和 GUI 版本的关键词
+
+        Args:
+            release_info: GitHub release 信息
+
+        Returns:
+            Dict: 包含 'cli'、'gui' 和 'gui_keywords' 的字典
+        """
+        body = release_info.get('body', '')
+        if not body:
+            self.logger.warning("release body 为空，使用默认关键词")
+            return {'cli': 'Lite', 'gui': 'Full', 'gui_keywords': ['Full']}
+
+        # 提取命令行版关键词
+        cli_keywords = re.findall(r'(\w+)\s*=\s*命令行版', body)
+        # 提取图形界面版关键词
+        gui_keywords = re.findall(r'(\w+)\s*=\s*图形界面版', body)
+
+        cli_keyword = cli_keywords[-1] if cli_keywords else 'Lite'
+        gui_keyword = gui_keywords[-1] if gui_keywords else 'Full'
+
+        # 获取 assets 信息用于显示文件大小
+        assets = release_info.get('assets', [])
+
+        # 构建版本到文件大小的映射
+        version_sizes = {}
+        for asset in assets:
+            asset_name = asset.get('name', '')
+            size_mb = asset.get('size', 0) / (1024 * 1024)
+            # 从文件名中提取版本关键词
+            parts = asset_name.split('-')
+            if len(parts) >= 2:
+                version_keyword = parts[-1].replace('.zip', '')
+                version_sizes[version_keyword] = size_mb
+
+        # 完整打印所有找到的图形界面版本
+        if gui_keywords:
+            gui_versions_str = ', '.join(gui_keywords)
+            self.logger.debug(f"从 body 中提取关键词: 命令行版={cli_keyword}, 图形界面版=[{gui_versions_str}]")
+        else:
+            self.logger.debug(f"从 body 中提取关键词: 命令行版={cli_keyword}, 图形界面版={gui_keyword}")
+
+        return {
+            'cli': cli_keyword,
+            'gui': gui_keyword,
+            'gui_keywords': gui_keywords if gui_keywords else ['Full']
+        }
+
+    def find_download_url(self, release_info: Dict, pattern: str, select_smallest: bool = False) -> Optional[str]:
         """
         从 release 信息中查找匹配的下载链接
 
         Args:
             release_info: GitHub release 信息
             pattern: 文件名匹配模式
+            select_smallest: 是否在多个匹配项中选择最小的文件
 
         Returns:
             下载 URL，如果未找到则返回 None
         """
         assets = release_info.get('assets', [])
+        matched_assets = []
 
         for asset in assets:
             asset_name = asset.get('name', '')
             if re.match(pattern.replace('*', r'[\d.\-a-zA-Z]+'), asset_name):
-                return asset.get('browser_download_url')
+                matched_assets.append(asset)
 
-        return None
+        if not matched_assets:
+            return None
+
+        if select_smallest and len(matched_assets) > 1:
+            # 选择最小的文件
+            matched_assets.sort(key=lambda x: x.get('size', float('inf')))
+            chosen_file = matched_assets[0]
+            file_name = chosen_file.get('name', '')
+            file_size_mb = chosen_file.get('size', 0) / (1024 * 1024)
+            version_keyword = file_name.split('-')[-1].replace('.zip', '')
+            
+            # 显示所有匹配的文件及其大小
+            file_info_list = []
+            for asset in matched_assets:
+                name = asset.get('name', '')
+                size_mb = asset.get('size', 0) / (1024 * 1024)
+                keyword = name.split('-')[-1].replace('.zip', '')
+                file_info_list.append(f"{keyword} ({size_mb:.2f} MB)")
+            file_info_str = ', '.join(file_info_list)
+            
+            self.logger.info(f"找到 {len(matched_assets)} 个匹配文件: [{file_info_str}]")
+            self.logger.info(f"选择最小的图形界面版本: {file_name} ({file_size_mb:.2f} MB)")
+        else:
+            chosen_file = matched_assets[0]
+            file_name = chosen_file.get('name', '')
+            file_size_mb = chosen_file.get('size', 0) / (1024 * 1024)
+            version_keyword = file_name.split('-')[-1].replace('.zip', '')
+            self.logger.info(f"找到匹配文件: {file_name} ({file_size_mb:.2f} MB)")
+
+        return matched_assets[0].get('browser_download_url')
 
     def download_file_with_progress(self, url: str, save_path: str) -> bool:
         """
@@ -624,82 +703,162 @@ release_version = release
 
         return False
 
-    def download_latest_release(self) -> Optional[List[str]]:
+    def download_latest_release(self) -> Optional[Dict[str, Any]]:
         """
-        下载最新版本的 Lite 和 Full ZIP 文件
+        下载最新版本的 CLI 和 GUI ZIP 文件
 
         Returns:
-            下载的文件路径列表，如果下载失败则返回 None
+            包含下载信息的字典，包含：
+            - files: 下载的文件路径列表
+            - cli_keyword: CLI 版本关键词
+            - gui_keyword: GUI 版本关键词
+            如果下载失败则返回 None
         """
         release_info = self.get_latest_release_info()
         if not release_info:
             return None
 
+        # 从 body 中提取关键词
+        keywords = self.parse_release_keywords(release_info)
+        cli_keyword = keywords['cli']
+        gui_keywords = keywords['gui_keywords']
+
+        # 使用动态关键词更新模式
+        cli_zip_pattern = f'M9A-win-x86_64-v*-{cli_keyword}.zip'
+        # 构建所有图形界面版的模式
+        gui_zip_patterns = [f'M9A-win-x86_64-v*-{keyword}.zip' for keyword in gui_keywords]
+        
+        # 保存动态模式到类属性
+        self.cli_zip_pattern = cli_zip_pattern
+        self.gui_zip_pattern = gui_zip_patterns[0] if gui_zip_patterns else 'M9A-win-x86_64-v*-Full.zip'
+
         tag_name = release_info.get('tag_name', 'latest')
         download_dir = Path(self.temp_folder) / "ZIP"
         download_dir.mkdir(parents=True, exist_ok=True)
 
-        lite_url = self.find_download_url(release_info, self.lite_zip_pattern)
-        full_url = self.find_download_url(release_info, self.full_zip_pattern)
+        cli_url = self.find_download_url(release_info, cli_zip_pattern)
+        
+        # 查找所有图形界面版文件，选择最小的
+        gui_url = None
+        if gui_zip_patterns:
+            # 收集所有匹配的图形界面版文件
+            all_gui_assets = []
+            for pattern in gui_zip_patterns:
+                assets = release_info.get('assets', [])
+                for asset in assets:
+                    asset_name = asset.get('name', '')
+                    if re.match(pattern.replace('*', r'[\d.\-a-zA-Z]+'), asset_name):
+                        all_gui_assets.append(asset)
+            
+            # 选择最小的文件
+            if all_gui_assets:
+                all_gui_assets.sort(key=lambda x: x.get('size', float('inf')))
+                gui_url = all_gui_assets[0].get('browser_download_url')
+                gui_keyword = all_gui_assets[0].get('name', '').split('-')[-1].replace('.zip', '')
+                
+                # 显示所有匹配的图形界面版及其大小
+                file_info_list = []
+                for asset in all_gui_assets:
+                    name = asset.get('name', '')
+                    size_mb = asset.get('size', 0) / (1024 * 1024)
+                    keyword = name.split('-')[-1].replace('.zip', '')
+                    file_info_list.append(f"{keyword} ({size_mb:.2f} MB)")
+                file_info_str = ', '.join(file_info_list)
+                
+                chosen_size_mb = all_gui_assets[0].get('size', 0) / (1024 * 1024)
+                self.logger.info(f"找到 {len(all_gui_assets)} 个图形界面版: [{file_info_str}]")
+                self.logger.info(f"选择最小的: {gui_keyword} ({chosen_size_mb:.2f} MB)")
+            else:
+                gui_keyword = gui_keywords[0] if gui_keywords else 'Full'
+        else:
+            gui_keyword = 'Full'
 
         # 检查临时文件夹中是否存在最新版本的压缩包
         downloaded_files = []
         version_pattern = tag_name.replace('v', '')
         
-        # 检查 Lite ZIP
-        if lite_url:
-            lite_filename = Path(lite_url).name
-            lite_save_path = download_dir / lite_filename
-            
-            # 检查临时文件夹中是否存在对应版本的 Lite ZIP
-            lite_files = list(download_dir.glob(LITE_ZIP_PATTERN.replace('*', version_pattern)))
-            if lite_files:
-                self.logger.info(f"临时文件夹中已存在最新版本的 Lite ZIP: {lite_files[0]}")
-                downloaded_files.append(str(lite_files[0]))
-            else:
-                # 下载 Lite ZIP
-                if self.download_file_with_progress(lite_url, str(lite_save_path)):
-                    downloaded_files.append(str(lite_save_path))
+        # 检查 CLI ZIP
+        if cli_url:
+            cli_filename = Path(cli_url).name
+            cli_save_path = download_dir / cli_filename
+
+            # 检查临时文件夹中是否存在对应版本的 CLI ZIP
+            cli_files = list(download_dir.glob(cli_zip_pattern.replace('*', version_pattern)))
+            if cli_files:
+                self.logger.info(f"临时文件夹中已存在最新版本的 CLI ZIP: {cli_files[0]}")
+
+                # 校验 CLI ZIP 文件的完整性
+                cli_zip_path = str(cli_files[0])
+                if not self._verify_zip_integrity(cli_zip_path, release_info, cli_filename):
+                    self.logger.error("CLI ZIP 文件校验失败，将重新下载")
+                    cli_files = []  # 强制重新下载
                 else:
-                    self.logger.critical("下载 Lite ZIP 失败")
+                    downloaded_files.append(cli_zip_path)
+
+            if not cli_files:
+                # 下载 CLI ZIP
+                if self.download_file_with_progress(cli_url, str(cli_save_path)):
+                    # 校验下载的 CLI ZIP 文件
+                    if not self._verify_zip_integrity(str(cli_save_path), release_info, cli_filename):
+                        self.logger.critical("下载的 CLI ZIP 文件校验失败")
+                        return None
+                    downloaded_files.append(str(cli_save_path))
+                else:
+                    self.logger.critical("下载 CLI ZIP 失败")
                     return None
         else:
-            self.logger.error(f"未找到匹配的 Lite ZIP 文件: {self.lite_zip_pattern}")
+            self.logger.error(f"未找到匹配的 CLI ZIP 文件: {cli_zip_pattern}")
             return None
 
-        # 检查是否需要下载 Full ZIP
-        need_full_download = True
+        # 检查是否需要下载 GUI ZIP
+        need_gui_download = True
         
-        # 检查 Lite ZIP 是否包含 deps 文件夹
-        lite_zip_path = downloaded_files[0]
-        if self.check_lite_zip_has_deps(lite_zip_path):
-            need_full_download = False
-            self.logger.info("Lite ZIP 已包含 deps 文件夹，跳过 Full ZIP 下载")
+        # 检查 CLI ZIP 是否包含 deps 文件夹
+        cli_zip_path = downloaded_files[0]
+        if self.check_lite_zip_has_deps(cli_zip_path):
+            need_gui_download = False
+            self.logger.info("CLI ZIP 已包含 deps 文件夹，跳过 GUI ZIP 下载")
         elif not self.github_full_download_enabled:
-            need_full_download = False
-            self.logger.info("配置中禁用了 Full 版本下载，跳过 Full ZIP 下载")
+            need_gui_download = False
+            self.logger.info("配置中禁用了 GUI 版本下载，跳过 GUI ZIP 下载")
 
-        # 检查 Full ZIP
-        if need_full_download and full_url:
-            full_filename = Path(full_url).name
-            full_save_path = download_dir / full_filename
+        # 检查 GUI ZIP
+        if need_gui_download and gui_url:
+            gui_filename = Path(gui_url).name
+            gui_save_path = download_dir / gui_filename
             
-            # 检查临时文件夹中是否存在对应版本的 Full ZIP
-            full_files = list(download_dir.glob(FULL_ZIP_PATTERN.replace('*', version_pattern)))
-            if full_files:
-                self.logger.info(f"临时文件夹中已存在最新版本的 Full ZIP: {full_files[0]}")
-                downloaded_files.append(str(full_files[0]))
-            else:
-                # 下载 Full ZIP
-                if self.download_file_with_progress(full_url, str(full_save_path)):
-                    downloaded_files.append(str(full_save_path))
-                else:
-                    self.logger.critical("下载 Full ZIP 失败")
-                    return None
-        elif not need_full_download:
-            self.logger.info("跳过 Full ZIP 下载")
+            # 检查临时文件夹中是否存在对应版本的 GUI ZIP
+            gui_files = list(download_dir.glob(f"M9A-win-x86_64-{version_pattern}-{gui_keyword}.zip"))
+            if gui_files:
+                self.logger.info(f"临时文件夹中已存在最新版本的 GUI ZIP: {gui_files[0]}")
 
-        return downloaded_files
+                # 校验 GUI ZIP 文件的完整性
+                gui_zip_path = str(gui_files[0])
+                if not self._verify_zip_integrity(gui_zip_path, release_info, gui_filename):
+                    self.logger.error("GUI ZIP 文件校验失败，将重新下载")
+                    gui_files = []  # 强制重新下载
+                else:
+                    downloaded_files.append(gui_zip_path)
+
+            if not gui_files:
+                # 下载 GUI ZIP
+                if self.download_file_with_progress(gui_url, str(gui_save_path)):
+                    # 校验下载的 GUI ZIP 文件
+                    if not self._verify_zip_integrity(str(gui_save_path), release_info, gui_filename):
+                        self.logger.critical("下载的 GUI ZIP 文件校验失败")
+                        return None
+                    downloaded_files.append(str(gui_save_path))
+                else:
+                    self.logger.critical("下载 GUI ZIP 失败")
+                    return None
+        elif not need_gui_download:
+            self.logger.info("跳过 GUI ZIP 下载")
+
+        return {
+            'files': downloaded_files,
+            'cli_keyword': cli_keyword,
+            'gui_keyword': gui_keyword
+        }
 
     def _calculate_sha256(self, file_path: str) -> str:
         """
@@ -752,107 +911,6 @@ release_version = release
         
         return None
 
-    def download_latest_release(self) -> Optional[List[str]]:
-        """
-        下载最新版本的 Lite 和 Full ZIP 文件
-
-        Returns:
-            下载的文件路径列表，如果下载失败则返回 None
-        """
-        release_info = self.get_latest_release_info()
-        if not release_info:
-            return None
-
-        tag_name = release_info.get('tag_name', 'latest')
-        download_dir = Path(self.temp_folder) / "ZIP"
-        download_dir.mkdir(parents=True, exist_ok=True)
-
-        lite_url = self.find_download_url(release_info, self.lite_zip_pattern)
-        full_url = self.find_download_url(release_info, self.full_zip_pattern)
-
-        # 检查临时文件夹中是否存在最新版本的压缩包
-        downloaded_files = []
-        version_pattern = tag_name.replace('v', '')
-        
-        # 检查 Lite ZIP
-        if lite_url:
-            lite_filename = Path(lite_url).name
-            lite_save_path = download_dir / lite_filename
-            
-            # 检查临时文件夹中是否存在对应版本的 Lite ZIP
-            lite_files = list(download_dir.glob(LITE_ZIP_PATTERN.replace('*', version_pattern)))
-            if lite_files:
-                self.logger.info(f"临时文件夹中已存在最新版本的 Lite ZIP: {lite_files[0]}")
-                
-                # 校验 Lite ZIP 文件的完整性
-                lite_zip_path = str(lite_files[0])
-                if not self._verify_zip_integrity(lite_zip_path, release_info, lite_filename):
-                    self.logger.error("Lite ZIP 文件校验失败，将重新下载")
-                    lite_files = []  # 强制重新下载
-                else:
-                    downloaded_files.append(lite_zip_path)
-            
-            if not lite_files:
-                # 下载 Lite ZIP
-                if self.download_file_with_progress(lite_url, str(lite_save_path)):
-                    # 校验下载的 Lite ZIP 文件
-                    if not self._verify_zip_integrity(str(lite_save_path), release_info, lite_filename):
-                        self.logger.critical("下载的 Lite ZIP 文件校验失败")
-                        return None
-                    downloaded_files.append(str(lite_save_path))
-                else:
-                    self.logger.critical("下载 Lite ZIP 失败")
-                    return None
-        else:
-            self.logger.error(f"未找到匹配的 Lite ZIP 文件: {self.lite_zip_pattern}")
-            return None
-
-        # 检查是否需要下载 Full ZIP
-        need_full_download = True
-        
-        # 检查 Lite ZIP 是否包含 deps 文件夹
-        lite_zip_path = downloaded_files[0]
-        if self.check_lite_zip_has_deps(lite_zip_path):
-            need_full_download = False
-            self.logger.info("Lite ZIP 已包含 deps 文件夹，跳过 Full ZIP 下载")
-        elif not self.github_full_download_enabled:
-            need_full_download = False
-            self.logger.info("配置中禁用了 Full 版本下载，跳过 Full ZIP 下载")
-
-        # 检查 Full ZIP
-        if need_full_download and full_url:
-            full_filename = Path(full_url).name
-            full_save_path = download_dir / full_filename
-            
-            # 检查临时文件夹中是否存在对应版本的 Full ZIP
-            full_files = list(download_dir.glob(FULL_ZIP_PATTERN.replace('*', version_pattern)))
-            if full_files:
-                self.logger.info(f"临时文件夹中已存在最新版本的 Full ZIP: {full_files[0]}")
-                
-                # 校验 Full ZIP 文件的完整性
-                full_zip_path = str(full_files[0])
-                if not self._verify_zip_integrity(full_zip_path, release_info, full_filename):
-                    self.logger.error("Full ZIP 文件校验失败，将重新下载")
-                    full_files = []  # 强制重新下载
-                else:
-                    downloaded_files.append(full_zip_path)
-            
-            if not full_files:
-                # 下载 Full ZIP
-                if self.download_file_with_progress(full_url, str(full_save_path)):
-                    # 校验下载的 Full ZIP 文件
-                    if not self._verify_zip_integrity(str(full_save_path), release_info, full_filename):
-                        self.logger.critical("下载的 Full ZIP 文件校验失败")
-                        return None
-                    downloaded_files.append(str(full_save_path))
-                else:
-                    self.logger.critical("下载 Full ZIP 失败")
-                    return None
-        elif not need_full_download:
-            self.logger.info("跳过 Full ZIP 下载")
-
-        return downloaded_files
-
     def _verify_zip_integrity(self, zip_path: str, release_info: Dict, zip_filename: str) -> bool:
         """
         验证 ZIP 文件的完整性
@@ -898,45 +956,45 @@ release_version = release
 
     def extract_deps_from_full_zip(self, full_zip_path: Optional[str] = None, m9a_folder: Optional[str] = None) -> bool:
         """
-        从 Full ZIP 文件中提取 deps 文件夹到 M9A 文件夹
+        从 GUI ZIP 文件中提取 deps 文件夹到 M9A 文件夹
 
         Args:
-            full_zip_path: Full ZIP 文件路径，如果为 None 则从当前目录查找
+            full_zip_path: GUI ZIP 文件路径，如果为 None 则从当前目录查找
             m9a_folder: M9A 文件夹路径，如果为 None 则使用默认路径
 
         Returns:
             操作是否成功
         """
         if full_zip_path and os.path.exists(full_zip_path):
-            full_zip_file = Path(full_zip_path)
+            gui_zip_file = Path(full_zip_path)
         else:
-            pattern = self.full_zip_pattern.replace('*', r'[\d.]+')
-            full_zip_regex = re.compile(pattern)
+            pattern = self.gui_zip_pattern.replace('*', r'[\d.]+')
+            gui_zip_regex = re.compile(pattern)
 
             search_dirs = [Path(self.temp_folder), Path.cwd()]
-            full_zip_files = []
+            gui_zip_files = []
 
             for search_dir in search_dirs:
                 if search_dir.exists():
-                    full_zip_files.extend([f for f in search_dir.glob(FULL_ZIP_PATTERN) if full_zip_regex.match(f.name)])
+                    gui_zip_files.extend([f for f in search_dir.glob('M9A-win-x86_64-v*-*.zip') if gui_zip_regex.match(f.name)])
 
-            if not full_zip_files:
-                self.logger.warning(f"未找到匹配的 Full ZIP 文件: {self.full_zip_pattern}")
+            if not gui_zip_files:
+                self.logger.warning(f"未找到匹配的 GUI ZIP 文件: {self.gui_zip_pattern}")
                 return False
 
-            full_zip_file = full_zip_files[0]
+            gui_zip_file = gui_zip_files[0]
 
-        self.logger.info(f"找到 Full ZIP 文件: {full_zip_file}")
+        self.logger.info(f"GUI ZIP 文件: {gui_zip_file}")
 
         try:
             m9a_path = Path(m9a_folder) if m9a_folder else Path(self.m9a_folders[0])
             m9a_path.mkdir(parents=True, exist_ok=True)
 
-            with zipfile.ZipFile(full_zip_file, 'r') as zip_ref:
+            with zipfile.ZipFile(gui_zip_file, 'r') as zip_ref:
                 deps_files = [f for f in zip_ref.namelist() if f.startswith('deps/')]
 
                 if not deps_files:
-                    self.logger.warning(f"ZIP 文件中未找到 deps 文件夹: {full_zip_file}")
+                    self.logger.critical(f"未找到 deps 文件夹: {gui_zip_file}")
                     return False
 
                 total_size = sum(zip_ref.getinfo(f).file_size for f in deps_files)
@@ -964,27 +1022,27 @@ release_version = release
 
     def find_lite_zip(self) -> Optional[str]:
         """
-        查找匹配的 Lite ZIP 文件
+        查找匹配的 CLI ZIP 文件
 
         Returns:
             找到的 ZIP 文件路径，如果未找到则返回 None
         """
-        pattern = self.lite_zip_pattern.replace('*', r'[\d.]+')
-        lite_zip_regex = re.compile(pattern)
+        pattern = self.cli_zip_pattern.replace('*', r'[\d.]+')
+        cli_zip_regex = re.compile(pattern)
 
         # 搜索目录：临时文件夹和当前目录
         search_dirs = [Path(self.temp_folder), Path.cwd()]
-        lite_zip_files = []
+        cli_zip_files = []
 
         for search_dir in search_dirs:
             if search_dir.exists():
-                lite_zip_files.extend([f for f in search_dir.glob(LITE_ZIP_PATTERN) if lite_zip_regex.match(f.name)])
+                cli_zip_files.extend([f for f in search_dir.glob('M9A-win-x86_64-v*-*.zip') if cli_zip_regex.match(f.name)])
 
-        if not lite_zip_files:
-            self.logger.warning(f"未找到匹配的 Lite ZIP 文件: {self.lite_zip_pattern}")
+        if not cli_zip_files:
+            self.logger.warning(f"未找到匹配的 CLI ZIP 文件: {self.cli_zip_pattern}")
             return None
 
-        return str(lite_zip_files[0])
+        return str(cli_zip_files[0])
 
     def run_update(self) -> bool:
         """
@@ -992,50 +1050,54 @@ release_version = release
 
         执行完整的 M9A 更新流程，包括：
         1. 从 GitHub 获取最新版本信息
-        2. 下载 Lite 和 Full ZIP 文件
+        2. 下载 CLI 和 GUI ZIP 文件
         3. 对每个 M9A 执行：
            - 备份配置文件
            - 清理 M9A 文件夹
-           - 解压 Lite ZIP 文件
+           - 解压 CLI ZIP 文件
            - 恢复配置文件
-           - 从 Full ZIP 文件中提取 deps 文件夹（如果需要）
+           - 从 GUI ZIP 文件中提取 deps 文件夹（如果需要）
         4. 清理临时文件夹
 
         Returns:
             bool: 操作是否成功
         """
 
-        lite_zip = None
-        full_zip = None
+        cli_zip = None
+        gui_zip = None
 
         # 尝试从 GitHub 下载最新版本
         self.logger.info("正在从 GitHub 获取最新版本...")
-        downloaded_files = self.download_latest_release()
-        if downloaded_files:
+        download_result = self.download_latest_release()
+        if download_result:
+            downloaded_files = download_result['files']
+            cli_keyword = download_result['cli_keyword']
+            gui_keyword = download_result['gui_keyword']
+
             for file_path in downloaded_files:
-                if 'Lite' in file_path:
-                    lite_zip = file_path
-                elif 'Full' in file_path:
-                    full_zip = file_path
+                if cli_keyword in file_path:
+                    cli_zip = file_path
+                elif gui_keyword in file_path:
+                    gui_zip = file_path
         else:
             self.logger.warning("从 GitHub 下载失败，尝试使用本地文件")
 
-        if not lite_zip:
-            lite_zip = self.find_lite_zip()
-            if not lite_zip:
-                self.logger.critical("未找到 Lite ZIP 文件，更新终止")
+        if not cli_zip:
+            cli_zip = self.find_lite_zip()
+            if not cli_zip:
+                self.logger.critical("未找到 CLI ZIP 文件，更新终止")
                 return False
 
-        self.logger.info(f"使用 Lite ZIP 文件: {lite_zip}")
+        self.logger.info(f"使用 CLI ZIP 文件: {cli_zip}")
 
         # 检查是否需要提取 deps 文件夹
         need_extract_deps = True
-        if self.check_lite_zip_has_deps(lite_zip):
+        if self.check_lite_zip_has_deps(cli_zip):
             need_extract_deps = False
-            self.logger.info("Lite ZIP 已包含 deps 文件夹，跳过 deps 提取")
-        elif not full_zip:
+            self.logger.info("CLI ZIP 已包含 deps 文件夹，跳过 deps 提取")
+        elif not gui_zip:
             need_extract_deps = False
-            self.logger.info("未找到 Full ZIP 文件，跳过 deps 提取")
+            self.logger.info("未找到 GUI ZIP 文件，跳过 deps 提取")
 
         # 遍历所有 M9A
         all_success = True
@@ -1053,8 +1115,8 @@ release_version = release
                 all_success = False
                 continue
 
-            if not self.extract_zip_with_progress(lite_zip, m9a_folder):
-                self.logger.critical(f"解压 Lite ZIP 失败: {m9a_folder}")
+            if not self.extract_zip_with_progress(cli_zip, m9a_folder):
+                self.logger.critical(f"解压 CLI ZIP 失败: {m9a_folder}")
                 all_success = False
                 continue
 
@@ -1067,7 +1129,7 @@ release_version = release
 
             # 提取 deps 文件夹
             if need_extract_deps:
-                if not self.extract_deps_from_full_zip(full_zip, m9a_folder):
+                if not self.extract_deps_from_full_zip(gui_zip, m9a_folder):
                     self.logger.critical(f"提取 deps 文件夹失败: {m9a_folder}")
                     all_success = False
                     continue
