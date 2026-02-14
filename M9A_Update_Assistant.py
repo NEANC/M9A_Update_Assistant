@@ -19,7 +19,7 @@ from typing import Optional, Dict, List
 
 LITE_ZIP_PATTERN = 'M9A-win-x86_64-v*-Lite.zip'
 FULL_ZIP_PATTERN = 'M9A-win-x86_64-v*-Full.zip'
-VERSION = "v1.5.2"
+VERSION = "v1.6.0"
 
 
 def print_info():
@@ -142,6 +142,8 @@ release_version = release
             self.logger.info(f"已配置代理: {self.github_proxy}")
         else:
             self.logger.info("未配置代理，若遇到网络问题请配置代理")
+
+        self.logger.info(f"Release 版本: {self.github_release_version}")
 
         if self.log_save_enabled:
             self._setup_file_logger()
@@ -532,7 +534,7 @@ release_version = release
                     downloaded_size = 0
 
                     if total_size > 0:
-                        self.logger.info(f"文件大小: {total_size / (1024 * 1024):.2f} MB")
+                        self.logger.info(f"获取到文件大小: {total_size / (1024 * 1024):.2f} MB")
 
                     with open(save_path, 'wb') as f:
                         chunk_size = 8192
@@ -550,7 +552,7 @@ release_version = release
                     # 清理进度条输出行
                     print("\r" + " " * 80 + "\r", end="", flush=True)
 
-                    self.logger.info(f"下载完成: {save_path}")
+                    self.logger.info(f"下载完成，文件大小: {downloaded_size / (1024 * 1024):.2f} MB，保存路径: {save_path}")
                     return True
             except requests.RequestException as e:
                 self.logger.error(f"下载文件失败: {e}")
@@ -823,14 +825,14 @@ release_version = release
             if expected_sha256:
                 actual_sha256 = self._calculate_sha256(zip_path)
                 if actual_sha256 != expected_sha256:
-                    self.logger.error(f"SHA256 校验失败:\n"
-                                      f"GitHub: {expected_sha256}\n"
-                                      f"本地:   {actual_sha256}")
+                    self.logger.error(f"SHA256 校验失败:")
+                    self.logger.warning(f"GitHub: {expected_sha256}")
+                    self.logger.warning(f"本地:   {actual_sha256}")
                     return False
                 else:
-                    self.logger.info(f"SHA256 校验成功：\n"
-                                      f"GitHub: {expected_sha256}\n"
-                                      f"本地:   {actual_sha256}")
+                    self.logger.info(f"SHA256 校验成功")
+                    self.logger.info(f"GitHub: {expected_sha256}")
+                    self.logger.info(f"本地:   {actual_sha256}")
 
             else:
                 self.logger.info("未找到 SHA256 校验值，仅验证文件格式")
@@ -987,6 +989,7 @@ release_version = release
         # 遍历所有 M9A
         all_success = True
         for index, m9a_folder in enumerate(self.m9a_folders, 1):
+            print(f"\n")
             self.logger.info(f"开始更新第 {index}/{len(self.m9a_folders)} 个 M9A: {m9a_folder}")
 
             # 备份 config（如果存在）
