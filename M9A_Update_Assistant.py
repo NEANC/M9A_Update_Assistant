@@ -101,6 +101,11 @@ full_download_enabled = true
 # 代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080）
 # 留空表示不使用代理
 proxy =
+
+# Release 版本选择
+# release: 使用最新正式版（https://github.com/MAA1999/M9A/releases）
+# latest: 使用带有 latest 标签的版本（https://github.com/MAA1999/M9A/releases/latest）
+release_version = release
 """
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
@@ -129,7 +134,7 @@ proxy =
         self.log_save_enabled = self.config.getboolean('Logs', 'save_enabled', fallback=True)
 
         self.github_repo = self.config.get('GitHub', 'repo', fallback='MAA1999/M9A')
-        self.github_api_url = f"https://api.github.com/repos/{self.github_repo}/releases/latest"
+        self.github_release_version = self.config.get('GitHub', 'release_version', fallback='release')
         self.github_proxy = self.config.get('GitHub', 'proxy', fallback='').strip()
         self.github_full_download_enabled = self.config.getboolean('GitHub', 'full_download_enabled', fallback=True)
 
@@ -409,9 +414,9 @@ proxy =
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 for file_name in zip_ref.namelist():
                     if file_name.startswith('deps/'):
-                        self.logger.info(f"Lite ZIP 文件中包含 deps 文件夹: {zip_path}")
+                        self.logger.info(f"Lite ZIP 文件中存在 deps 文件夹")
                         return True
-                self.logger.info(f"Lite ZIP 文件中不包含 deps 文件夹: {zip_path}")
+                self.logger.warning(f"Lite ZIP 文件中不包含 deps 文件夹")
                 return False
         except (zipfile.BadZipFile, IOError, OSError) as e:
             self.logger.error(f"检查 Lite ZIP 文件失败: {e}")
@@ -422,6 +427,9 @@ proxy =
         获取 GitHub 最新 release 信息
 
         从 GitHub API 获取指定仓库的最新 release 信息。
+        根据 release_version 配置选择不同的 API 端点：
+        - release: 使用 /releases 端点，返回最新的正式版
+        - latest: 使用 /releases/latest 端点，返回带有 latest 标签的版本
 
         Returns:
             Dict: release 信息字典，如果获取失败则返回 None
@@ -433,11 +441,25 @@ proxy =
         try:
             headers = {'User-Agent': 'M9A-Update-Assistant'}
             proxies = {'http': self.github_proxy, 'https': self.github_proxy} if self.github_proxy else None
-            
-            response = requests.get(self.github_api_url, headers=headers, proxies=proxies, timeout=30)
-            response.raise_for_status()  # 抛出 HTTP 错误
-            
-            release_info = response.json()
+
+            if self.github_release_version == 'release':
+                api_url = f"https://api.github.com/repos/{self.github_repo}/releases"
+                response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
+                response.raise_for_status()
+                releases = response.json()
+                if not releases:
+                    self.logger.error("未找到任何 release")
+                    return None
+                release_info = releases[0]
+            elif self.github_release_version == 'latest':
+                api_url = f"https://api.github.com/repos/{self.github_repo}/releases/latest"
+                response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
+                response.raise_for_status()
+                release_info = response.json()
+            else:
+                self.logger.error(f"未知的 release_version: {self.github_release_version}")
+                return None
+
             self.logger.info(f"获取到最新版本: {release_info.get('tag_name', 'Unknown')}")
             return release_info
         except requests.RequestException as e:
@@ -459,12 +481,12 @@ proxy =
             下载 URL，如果未找到则返回 None
         """
         assets = release_info.get('assets', [])
-        
+
         for asset in assets:
             asset_name = asset.get('name', '')
-            if re.match(pattern.replace('*', r'[\d.]+'), asset_name):
+            if re.match(pattern.replace('*', r'[\d.\-a-zA-Z]+'), asset_name):
                 return asset.get('browser_download_url')
-        
+
         return None
 
     def download_file_with_progress(self, url: str, save_path: str) -> bool:
