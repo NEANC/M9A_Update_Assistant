@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, Any
 
 
-VERSION = "v1.7.0"
+VERSION = "v1.8.0"
 
 
 def print_info():
@@ -81,7 +81,7 @@ m9a_folders = Z:\M9A
 temp_folder = Z:\Temp\M9A-Update-Assistant
 
 # 配置存档文件夹名（用于保存更新前的配置）
-archive_folder_name = 更新前存档
+archive_folder_name = 存档文件夹
 
 [Logs]
 # 是否保存日志文件
