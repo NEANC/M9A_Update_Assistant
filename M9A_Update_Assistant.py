@@ -5,7 +5,6 @@ import os
 import re
 import sys
 import time
-import zlib
 import shutil
 import logging
 import zipfile
@@ -80,6 +79,9 @@ m9a_folders = Z:\M9A
 
 # 临时文件夹路径
 temp_folder = Z:\Temp\M9A-Update-Assistant
+
+# 配置存档文件夹名（用于保存更新前的配置）
+archive_folder_name = 更新前存档
 
 [Logs]
 # 是否保存日志文件
@@ -178,6 +180,11 @@ release_version = release
                 self.logger.info(f"使用系统临时文件夹: {self.temp_folder}")
                 # 确保系统临时文件夹存在
                 os.makedirs(self.temp_folder, exist_ok=True)
+        
+        self.archive_folder_name = self.config.get('Paths', 'archive_folder_name', fallback='更新前存档').strip()
+        if not self.archive_folder_name:
+            self.archive_folder_name = '更新前存档'
+        
         self.cli_zip_pattern = ''
         self.gui_zip_pattern = ''
         self.log_max_files = self.config.getint('Logs', 'max_files', fallback=15)
@@ -282,14 +289,15 @@ release_version = release
             except Exception as e:
                 self.logger.warning(f"删除日志文件 {log_file} 失败: {e}")
 
-    def backup_config(self, m9a_folder: str) -> bool:
+    def backup_config(self, m9a_folder: str, version: str = '') -> bool:
         """
-        备份 config 文件夹到临时文件夹
+        备份 config 文件夹到程序根目录
 
-        将 M9A 文件夹中的 config 文件夹复制到临时文件夹，以便在更新完成后恢复配置。
+        将 M9A 文件夹中的 config 文件夹复制到程序根目录下的版本存档文件夹。
 
         Args:
             m9a_folder: M9A 文件夹路径
+            version: 版本号（如 v3.19.0）
 
         Returns:
             bool: 操作是否成功
@@ -299,22 +307,32 @@ release_version = release
             OSError: 操作系统错误
             shutil.Error: shutil 模块操作错误
         """
+        if not version:
+            self.logger.warning("版本号为空，跳过备份")
+            return False
+
         m9a_config_path = Path(m9a_folder) / "config"
-        # 为每个 M9A 路径创建独立的备份目录
-        # 使用路径的哈希值作为目录名，确保唯一性
-        path_hash = zlib.crc32(m9a_folder.encode()) & 0xffffffff
-        temp_config_path = Path(self.temp_folder) / f"config_{path_hash:08x}"
 
         if not m9a_config_path.exists():
             self.logger.warning(f"M9A 文件夹中的 config 文件夹不存在: {m9a_config_path}")
             return False
 
         try:
-            Path(self.temp_folder).mkdir(parents=True, exist_ok=True)
+            # 从 M9A 路径中提取备份名
+            m9a_path_obj = Path(m9a_folder)
+            drive_letter = m9a_path_obj.drive.replace(':', '')  # 获取盘符（如 A、B、C）
+            folder_name = m9a_path_obj.name  # 获取文件夹名（如 M9A、M9A1）
+            backup_name = f"{drive_letter}-{folder_name}"  # 组合文件名，例如：Z-M9A
+            
+            # 创建完整备份路径：./更新前存档/{version}/{盘符}-{文件夹名}/config
+            program_root = Path(__file__).parent  # 程序根目录
+            archive_path = program_root / self.archive_folder_name / version / backup_name / "config"
+            
+            # 创建备份
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(m9a_config_path, archive_path, dirs_exist_ok=True)
+            self.logger.info(f"config 文件夹已备份到: {archive_path}")
 
-            # 使用 dirs_exist_ok=True 简化代码，避免先删除再复制
-            shutil.copytree(m9a_config_path, temp_config_path, dirs_exist_ok=True)
-            self.logger.info(f"config 文件夹已备份到: {temp_config_path}")
             return True
         except (IOError, OSError, shutil.Error) as e:
             self.logger.error(f"备份 config 文件夹失败: {e}")
@@ -414,14 +432,15 @@ release_version = release
             self.logger.error(f"解压 ZIP 文件失败: {e}")
             return False
 
-    def restore_config(self, m9a_folder: str) -> bool:
+    def restore_config(self, m9a_folder: str, version: str = '') -> bool:
         """
         将 config 回写到 M9A 文件夹
 
-        将临时文件夹中的 config 文件夹复制回 M9A 文件夹，恢复之前备份的配置。
+        从程序根目录的版本存档文件夹中恢复 config 文件夹到 M9A 文件夹。
 
         Args:
             m9a_folder: M9A 文件夹路径
+            version: 版本号（如 v3.19.0）
 
         Returns:
             bool: 操作是否成功
@@ -431,20 +450,28 @@ release_version = release
             OSError: 操作系统错误
             shutil.Error: shutil 模块操作错误
         """
+        if not version:
+            self.logger.warning("版本号为空，跳过回写")
+            return False
 
-        # 使用路径的哈希值找到对应的备份目录
-        path_hash = zlib.crc32(m9a_folder.encode()) & 0xffffffff
-        temp_config_path = Path(self.temp_folder) / f"config_{path_hash:08x}"
+        # 从 M9A 路径中提取备份名
+        m9a_path_obj = Path(m9a_folder)
+        drive_letter = m9a_path_obj.drive.replace(':', '')
+        folder_name = m9a_path_obj.name
+        backup_name = f"{drive_letter}-{folder_name}"
+
+        # 构建备份路径
+        program_root = Path(__file__).parent
+        archive_config_path = program_root / self.archive_folder_name / version / backup_name / "config"
         m9a_config_path = Path(m9a_folder) / "config"
 
-        if not temp_config_path.exists():
-            self.logger.warning(f"临时文件夹中的 config 文件夹不存在: {temp_config_path}")
+        if not archive_config_path.exists():
+            self.logger.warning(f"备份的 config 文件夹不存在: {archive_config_path}")
             return False
 
         try:
-            # 使用 dirs_exist_ok=True 简化代码，避免先删除再复制
-            self.logger.info(f"config 文件夹正在回写：{temp_config_path} -> {m9a_config_path}")
-            shutil.copytree(temp_config_path, m9a_config_path, dirs_exist_ok=True)
+            self.logger.info(f"config 文件夹正在回写：{archive_config_path} -> {m9a_config_path}")
+            shutil.copytree(archive_config_path, m9a_config_path, dirs_exist_ok=True)
             self.logger.info(f"config 文件夹已回写到: {m9a_config_path}")
             return True
         except (IOError, OSError, shutil.Error) as e:
@@ -753,6 +780,7 @@ release_version = release
             - files: 下载的文件路径列表
             - cli_keyword: CLI 版本关键词
             - gui_keyword: GUI 版本关键词
+            - version: 版本号（如 v3.19.0）
             如果下载失败则返回 None
         """
         release_info = self.get_latest_release_info()
@@ -898,7 +926,8 @@ release_version = release
         return {
             'files': downloaded_files,
             'cli_keyword': cli_keyword,
-            'gui_keyword': gui_keyword
+            'gui_keyword': gui_keyword,
+            'version': tag_name
         }
 
     def _calculate_sha256(self, file_path: str) -> str:
@@ -1106,6 +1135,7 @@ release_version = release
 
         cli_zip = None
         gui_zip = None
+        version = ''
 
         # 尝试从 GitHub 下载最新版本
         self.logger.info("正在从 GitHub 获取最新版本...")
@@ -1114,6 +1144,7 @@ release_version = release
             downloaded_files = download_result['files']
             cli_keyword = download_result['cli_keyword']
             gui_keyword = download_result['gui_keyword']
+            version = download_result.get('version', '')
 
             for file_path in downloaded_files:
                 if cli_keyword in file_path:
@@ -1147,7 +1178,7 @@ release_version = release
             self.logger.info(f"开始更新第 {index}/{len(self.m9a_folders)} 个 M9A: {m9a_folder}")
 
             # 备份 config（如果存在）
-            config_backup_successful = self.backup_config(m9a_folder)
+            config_backup_successful = self.backup_config(m9a_folder, version)
             if not config_backup_successful:
                 self.logger.info("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
 
@@ -1163,7 +1194,7 @@ release_version = release
 
             # 回写 config（如果之前备份成功）
             if config_backup_successful:
-                if not self.restore_config(m9a_folder):
+                if not self.restore_config(m9a_folder, version):
                     self.logger.critical(f"回写 config 失败: {m9a_folder}")
                     all_success = False
                     continue
