@@ -541,7 +541,7 @@ release_version = release
             self.logger.error(f"检查 CLI ZIP 文件失败: {e}")
             return False
 
-    def get_latest_release_info(self) -> Optional[Dict]:
+    def get_latest_release_info(self, max_retries: int = 3, retry_interval: int = 10) -> Optional[Dict]:
         """
         获取 GitHub 最新 release 信息
 
@@ -550,6 +550,10 @@ release_version = release
         - release: 使用 /releases 端点，返回最新的正式版
         - latest: 使用 /releases/latest 端点，返回带有 latest 标签的版本
 
+        Args:
+            max_retries: 最大重试次数
+            retry_interval: 重试间隔（秒）
+
         Returns:
             Dict: release 信息字典，如果获取失败则返回 None
 
@@ -557,36 +561,51 @@ release_version = release
             requests.RequestException: 网络请求错误
         """
 
-        try:
-            headers = {'User-Agent': 'M9A-Update-Assistant'}
-            proxies = {'http': self.github_proxy, 'https': self.github_proxy} if self.github_proxy else None
+        for attempt in range(max_retries):
+            try:
+                headers = {'User-Agent': 'M9A-Update-Assistant'}
+                proxies = {'http': self.github_proxy, 'https': self.github_proxy} if self.github_proxy else None
 
-            if self.github_release_version == 'release':
-                api_url = f"https://api.github.com/repos/{self.github_repo}/releases"
-                response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
-                response.raise_for_status()
-                releases = response.json()
-                if not releases:
-                    self.logger.error("未找到任何 release")
+                if self.github_release_version == 'release':
+                    api_url = f"https://api.github.com/repos/{self.github_repo}/releases"
+                    response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
+                    response.raise_for_status()
+                    releases = response.json()
+                    if not releases:
+                        self.logger.error("未找到任何 release")
+                        return None
+                    release_info = releases[0]
+                elif self.github_release_version == 'latest':
+                    api_url = f"https://api.github.com/repos/{self.github_repo}/releases/latest"
+                    response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
+                    response.raise_for_status()
+                    release_info = response.json()
+                else:
+                    self.logger.error(f"未知的 release_version: {self.github_release_version}")
                     return None
-                release_info = releases[0]
-            elif self.github_release_version == 'latest':
-                api_url = f"https://api.github.com/repos/{self.github_repo}/releases/latest"
-                response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
-                response.raise_for_status()
-                release_info = response.json()
-            else:
-                self.logger.error(f"未知的 release_version: {self.github_release_version}")
-                return None
 
-            self.logger.info(f"获取到最新版本: {release_info.get('tag_name', 'Unknown')}")
-            return release_info
-        except requests.RequestException as e:
-            self.logger.error(f"获取 GitHub release 信息失败: {e}")
-            return None
-        except Exception as e:
-            self.logger.error(f"获取 GitHub release 信息时发生错误: {e}")
-            return None
+                self.logger.info(f"获取到最新版本: {release_info.get('tag_name', 'Unknown')}")
+                return release_info
+            except requests.RequestException as e:
+                self.logger.error(f"获取 GitHub release 信息失败: {e}")
+                if attempt < max_retries - 1:
+                    self.logger.info(f"等待 {retry_interval} 秒后重试...")
+                    time.sleep(retry_interval)
+                    self.logger.info(f"重试获取 release 信息（{attempt + 1}/{max_retries}）")
+                else:
+                    self.logger.error(f"获取 GitHub release 信息失败，已达到最大重试次数")
+                    return None
+            except Exception as e:
+                self.logger.error(f"获取 GitHub release 信息时发生错误: {e}")
+                if attempt < max_retries - 1:
+                    self.logger.info(f"等待 {retry_interval} 秒后重试...")
+                    time.sleep(retry_interval)
+                    self.logger.info(f"重试获取 release 信息（{attempt + 1}/{max_retries}）")
+                else:
+                    self.logger.error(f"获取 GitHub release 信息失败，已达到最大重试次数")
+                    return None
+
+        return None
 
     def parse_release_keywords(self, release_info: Dict) -> Dict[str, Any]:
         """
@@ -771,6 +790,55 @@ release_version = release
 
         return False
 
+    def _download_and_verify_zip(self, url: str, save_path: Path, release_info: Dict, 
+                                  zip_filename: str, max_retries: int = 3, 
+                                  retry_interval: int = 10) -> bool:
+        """
+        下载并校验 ZIP 文件，支持重试
+
+        Args:
+            url: 下载 URL
+            save_path: 保存路径
+            release_info: release 信息
+            zip_filename: ZIP 文件名
+            max_retries: 最大重试次数
+            retry_interval: 重试间隔（秒）
+
+        Returns:
+            bool: 操作是否成功
+        """
+        for attempt in range(max_retries):
+            # 下载文件
+            if not self.download_file_with_progress(url, str(save_path)):
+                if attempt < max_retries - 1:
+                    self.logger.error(f"下载失败，等待 {retry_interval} 秒后重试...")
+                    time.sleep(retry_interval)
+                    self.logger.info(f"重试下载（{attempt + 1}/{max_retries}）: {url}")
+                    continue
+                else:
+                    self.logger.critical(f"下载失败，已达到最大重试次数: {url}")
+                    return False
+
+            # 校验文件
+            if not self._verify_zip_integrity(str(save_path), release_info, zip_filename):
+                if attempt < max_retries - 1:
+                    self.logger.error(f"校验失败，等待 {retry_interval} 秒后重试下载...")
+                    # 删除无效文件
+                    try:
+                        save_path.unlink()
+                    except Exception:
+                        pass
+                    time.sleep(retry_interval)
+                    self.logger.info(f"重试下载（{attempt + 1}/{max_retries}）: {url}")
+                    continue
+                else:
+                    self.logger.critical(f"校验失败，已达到最大重试次数: {url}")
+                    return False
+
+            return True
+
+        return False
+
     def download_latest_release(self) -> Optional[Dict[str, Any]]:
         """
         下载最新版本的 CLI 和 GUI ZIP 文件
@@ -865,15 +933,10 @@ release_version = release
                     downloaded_files.append(cli_zip_path)
 
             if not cli_files:
-                # 下载 CLI ZIP
-                if self.download_file_with_progress(cli_url, str(cli_save_path)):
-                    # 校验下载的 CLI ZIP 文件
-                    if not self._verify_zip_integrity(str(cli_save_path), release_info, cli_filename):
-                        self.logger.critical("下载的 CLI ZIP 文件校验失败")
-                        return None
+                # 下载并校验 CLI ZIP
+                if self._download_and_verify_zip(cli_url, cli_save_path, release_info, cli_filename):
                     downloaded_files.append(str(cli_save_path))
                 else:
-                    self.logger.critical("下载 CLI ZIP 失败")
                     return None
         else:
             self.logger.error(f"未找到匹配的 CLI ZIP 文件: {cli_zip_pattern}")
@@ -910,15 +973,10 @@ release_version = release
                     downloaded_files.append(gui_zip_path)
 
             if not gui_files:
-                # 下载 GUI ZIP
-                if self.download_file_with_progress(gui_url, str(gui_save_path)):
-                    # 校验下载的 GUI ZIP 文件
-                    if not self._verify_zip_integrity(str(gui_save_path), release_info, gui_filename):
-                        self.logger.critical("下载的 GUI ZIP 文件校验失败")
-                        return None
+                # 下载并校验 GUI ZIP
+                if self._download_and_verify_zip(gui_url, gui_save_path, release_info, gui_filename):
                     downloaded_files.append(str(gui_save_path))
                 else:
-                    self.logger.critical("下载 GUI ZIP 失败")
                     return None
         elif not need_gui_download:
             self.logger.info("跳过 GUI ZIP 下载")
