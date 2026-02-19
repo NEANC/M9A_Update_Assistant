@@ -265,9 +265,6 @@ release_version = release
         清理多余的日志文件
         只保留最近的 N 个日志文件，不处理过期文件
         """
-        if not self.log_save_enabled:
-            return
-
         log_dir = Path("logs")
         if not log_dir.exists():
             return
