@@ -130,13 +130,54 @@ release_version = release
         else:
             self.m9a_folders = []
 
-        temp_folder_config = self.config.get('Paths', 'temp_folder', fallback='Temp')
+        temp_folder_config = self.config.get('Paths', 'temp_folder', fallback='Temp').strip()
 
-        if temp_folder_config == 'Temp':
+        # 确定临时文件夹路径
+        if not temp_folder_config:
+            # 配置为空，使用系统临时文件夹
+            system_temp = os.environ.get('TEMP', '')
+            if system_temp:
+                self.temp_folder = os.path.join(system_temp, 'M9A-Update-Assistant')
+            else:
+                # 备选方案：使用 %LOCALAPPDATA%\Temp
+                local_app_data = os.environ.get('LOCALAPPDATA', '')
+                if local_app_data:
+                    self.temp_folder = os.path.join(local_app_data, 'Temp', 'M9A-Update-Assistant')
+                else:
+                    # 最后备选：使用程序目录的 Temp 文件夹
+                    self.temp_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Temp')
+            self.logger.info(f"配置为空，使用系统临时文件夹: {self.temp_folder}")
+        elif temp_folder_config == 'Temp':
             # 使用程序目录的 Temp 文件夹
             self.temp_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Temp')
         else:
             self.temp_folder = temp_folder_config
+
+        # 检查临时文件夹是否存在，如果不存在则尝试创建
+        if not os.path.exists(self.temp_folder):
+            try:
+                os.makedirs(self.temp_folder, exist_ok=True)
+                self.logger.info(f"已创建临时文件夹: {self.temp_folder}")
+            except (OSError, PermissionError) as e:
+                # 创建失败，使用系统临时文件夹
+                self.logger.warning(f"无法创建临时文件夹 {self.temp_folder}: {e}")
+                
+                # 优先使用 %TEMP% 环境变量
+                system_temp = os.environ.get('TEMP', '')
+                if system_temp:
+                    self.temp_folder = os.path.join(system_temp, 'M9A-Update-Assistant')
+                else:
+                    # 备选方案：使用 %LOCALAPPDATA%\Temp
+                    local_app_data = os.environ.get('LOCALAPPDATA', '')
+                    if local_app_data:
+                        self.temp_folder = os.path.join(local_app_data, 'Temp', 'M9A-Update-Assistant')
+                    else:
+                        # 最后备选：使用当前目录
+                        self.temp_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Temp')
+                
+                self.logger.info(f"使用系统临时文件夹: {self.temp_folder}")
+                # 确保系统临时文件夹存在
+                os.makedirs(self.temp_folder, exist_ok=True)
         self.cli_zip_pattern = ''
         self.gui_zip_pattern = ''
         self.log_max_files = self.config.getint('Logs', 'max_files', fallback=15)
