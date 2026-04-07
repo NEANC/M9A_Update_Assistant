@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, Any
 
 
-VERSION = "v1.8.0"
+VERSION = "v1.9.0"
 
 
 def print_info():
@@ -1216,6 +1216,179 @@ release_version = release
 
         return str(cli_zip_files[0])
 
+    def check_self_update(self) -> bool:
+        """
+        检查并更新自身
+
+        从 GitHub 获取最新版本的 M9A Update Assistant，下载对应版本的 exe 文件，并覆盖更新本地文件。
+
+        Returns:
+            bool: 操作是否成功
+        """
+        print(f"\n")
+        self.logger.info(f"开始检查程序版本更新...")
+        # PyInstaller 标记 frozen
+        #frozen_val = getattr(sys, 'frozen', False)
+        #self.logger.info(f"PyInstaller 标记 - getattr(sys, 'frozen', False)  →  {frozen_val}")
+
+        # PyInstaller 临时目录 _MEIPASS
+        #has_meipass = hasattr(sys, '_MEIPASS')
+        #self.logger.info(f"PyInstaller 临时目录 - hasattr(sys, '_MEIPASS')        →  {has_meipass}")
+
+        # Nuitka 编译标记 __compiled__
+        #has_compiled = hasattr(sys, '__compiled__')
+        #self.logger.info(f"Nuitka 编译标记 - hasattr(sys, '__compiled__')    →  {has_compiled}")
+        
+        # 检查是否在打包后的可执行文件中运行
+        # 检查 PyInstaller 和 Nuitka 的标识
+        is_pyinstaller = getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS')
+        is_nuitka = hasattr(sys, '__compiled__')
+        self.logger.debug(f"PyInstaller 标识: {is_pyinstaller}")
+        self.logger.debug(f"Nuitka 标识: {is_nuitka}")
+        
+        # 检查 sys.argv[0] 是否以 .py 结尾
+        is_py_script = sys.argv[0].endswith('.py')
+        self.logger.debug(f"sys.argv[0] 是否以 .py 结尾: {is_py_script}")
+        
+        # 综合判断：如果不是 .py 脚本，或者有 PyInstaller/Nuitka 标识，则认为是打包后的程序
+        is_bundled = not is_py_script or is_pyinstaller or is_nuitka
+        self.logger.debug(f"综合判断: {is_bundled}")
+        
+        # 如果不是打包后的可执行文件，说明是源码运行
+        if not is_bundled:
+            self.logger.warning("当前为调试模式，跳过更新检查")
+            return False
+        
+        # 判断本地打包方式
+        local_package_type = None
+        if is_pyinstaller:
+            local_package_type = "PyInstaller"
+        elif is_nuitka:
+            local_package_type = "Nuitka"
+        else:
+            # 如果没有明确标识，默认使用 Nuitka
+            local_package_type = "Nuitka"
+        self.logger.debug(f"当前版本使用的打包方式: {local_package_type}")
+        
+        try:
+            # 获取最新版本信息
+            headers = {'User-Agent': 'M9A-Update-Assistant'}
+            proxies = {'http': self.github_proxy, 'https': self.github_proxy} if self.github_proxy else None
+            
+            api_url = f"https://api.github.com/repos/NEANC/M9A_Update_Assistant/releases/latest"
+            response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
+            response.raise_for_status()
+            release_info = response.json()
+            
+            latest_version = release_info.get('tag_name', '')
+            
+            # 版本比较
+            def version_to_tuple(v):
+                try:
+                    return tuple(map(int, v.lstrip('v').split('.')))
+                except:
+                    return ()
+            
+            current_ver_tuple = version_to_tuple(VERSION)
+            latest_ver_tuple = version_to_tuple(latest_version)
+            
+            if current_ver_tuple and latest_ver_tuple:
+                if current_ver_tuple >= latest_ver_tuple:
+                    self.logger.info(f"当前版本已最新")
+                    return False
+                else:
+                    self.logger.info(f"检测到新版本: {latest_version}")
+            else:
+                self.logger.warning(f"版本号校验错误，跳过更新")
+                return False
+            
+            # 查找 exe 文件
+            assets = release_info.get('assets', [])
+            exe_url = None
+            exe_name = None
+            
+            # 查找与本地相同打包方式的版本
+            primary_keyword = local_package_type
+            secondary_keyword = "PyInstaller" if local_package_type == "Nuitka" else "Nuitka"
+            
+            for asset in assets:
+                asset_name = asset.get('name', '')
+                if primary_keyword in asset_name and asset_name.endswith('.exe'):
+                    exe_url = asset.get('browser_download_url')
+                    exe_name = asset_name
+                    self.logger.info(f"找到 {primary_keyword} 版本: {exe_name}")
+                    break
+            
+            # 如果没有找到相同打包方式的版本，查找另一种打包方式
+            if not exe_url:
+                self.logger.info(f"未找到 {primary_keyword} 版本，尝试查找 {secondary_keyword} 版本")
+                for asset in assets:
+                    asset_name = asset.get('name', '')
+                    if secondary_keyword in asset_name and asset_name.endswith('.exe'):
+                        exe_url = asset.get('browser_download_url')
+                        exe_name = asset_name
+                        self.logger.info(f"找到 {secondary_keyword} 版本: {exe_name}")
+                        break
+            
+            if not exe_url:
+                self.logger.warning("未找到带有 Nuitka 或 PyInstaller 标签的 exe 文件")
+                return False
+            
+            # 下载文件
+            temp_exe_path = Path(self.temp_folder) / f"M9A_Update_Assistant_{latest_version}.exe"
+            temp_exe_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            self.logger.info(f"开始下载: {exe_url}")
+            if not self.download_file_with_progress(exe_url, str(temp_exe_path)):
+                self.logger.error("下载失败")
+                return False
+            
+            # 获取当前可执行文件路径
+            current_exe = Path(sys.executable)
+            self.logger.info(f"当前可执行文件: {current_exe}")
+            
+            # 重命名当前可执行文件为备份
+            backup_exe = current_exe.with_suffix('.exe.bak')
+            if backup_exe.exists():
+                backup_exe.unlink()
+            current_exe.rename(backup_exe)
+            self.logger.info(f"已备份当前文件到: {backup_exe}")
+            
+            # 复制下载的文件到当前可执行文件路径
+            shutil.copy2(temp_exe_path, current_exe)
+            self.logger.info(f"已更新文件: {current_exe}")
+            
+            # 清理临时文件
+            temp_exe_path.unlink()
+            
+            # 清理备份文件
+            if backup_exe.exists():
+                backup_exe.unlink()
+                self.logger.info(f"已删除备份文件: {backup_exe}")
+            
+            self.logger.info("M9A Update Assistant 更新完成")
+            return True
+            
+        except requests.RequestException as e:
+            self.logger.error(f"获取 GitHub release 信息失败: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"M9A Update Assistant 更新失败: {e}")
+            # 尝试恢复备份
+            try:
+                backup_exe = Path(sys.executable).with_suffix('.exe.bak')
+                if backup_exe.exists():
+                    current_exe = Path(sys.executable)
+                    if current_exe.exists():
+                        current_exe.unlink()
+                    backup_exe.rename(current_exe)
+                    self.logger.info(f"因为更新失败，将自动回滚: {current_exe}")
+                else:
+                    self.logger.critical(f"未找到备份文件: {backup_exe}")
+            except:
+                pass
+            return False
+
     def run_update(self) -> bool:
         """
         执行完整的更新流程
@@ -1335,7 +1508,12 @@ def main():
             assistant.logger.critical("错误的配置，请修改配置文件后重新运行。")
             sys.exit(1)
         
+        # 执行 M9A 更新
         success = assistant.run_update()
+        
+        # 检查自身更新
+        assistant.check_self_update()
+        
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:
         logger = logging.getLogger("M9AUpdateAssistant")
