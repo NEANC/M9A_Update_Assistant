@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import time
+import json
 import shutil
 import logging
 import zipfile
@@ -304,6 +305,19 @@ release_version = release
             OSError: 操作系统错误
             shutil.Error: shutil 模块操作错误
         """
+        # 尝试从 interface.json 读取版本号
+        interface_json_path = Path(m9a_folder) / "interface.json"
+        if interface_json_path.exists():
+            try:
+                with open(interface_json_path, 'r', encoding='utf-8') as f:
+                    interface_data = json.load(f)
+                if 'version' in interface_data:
+                    version = interface_data['version']
+                    self.logger.info(f"从 interface.json 读取到版本号: {version}")
+            except (json.JSONDecodeError, IOError, OSError) as e:
+                self.logger.warning(f"读取 interface.json 失败: {e}")
+                # 继续使用传入的 version 参数
+
         if not version:
             self.logger.warning("版本号为空，跳过备份")
             return False
@@ -324,6 +338,25 @@ release_version = release
             # 创建完整备份路径：./更新前存档/{version}/{盘符}-{文件夹名}/config
             program_root = Path(__file__).parent  # 程序根目录
             archive_path = program_root / self.archive_folder_name / version / backup_name / "config"
+            
+            # 检查备份目录是否已存在
+            if archive_path.exists():
+                # 创建 /old 目录
+                old_backup_dir = program_root / self.archive_folder_name / version / "old"
+                old_backup_dir.mkdir(parents=True, exist_ok=True)
+                
+                # 生成时间戳，用于重命名备份
+                timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+                old_backup_name = f"{backup_name}_{timestamp}"
+                old_backup_zip = old_backup_dir / f"{old_backup_name}.zip"
+                
+                # 压缩已存在的备份
+                self.logger.info(f"已存在备份，将其压缩到: {old_backup_zip}")
+                shutil.make_archive(str(old_backup_dir / old_backup_name), 'zip', str(archive_path.parent))
+                
+                # 删除已存在的备份目录
+                shutil.rmtree(archive_path.parent)
+                self.logger.info(f"已删除旧备份目录: {archive_path.parent}")
             
             # 创建备份
             archive_path.parent.mkdir(parents=True, exist_ok=True)
@@ -447,13 +480,27 @@ release_version = release
             OSError: 操作系统错误
             shutil.Error: shutil 模块操作错误
         """
+        # 尝试从 interface.json 读取版本号
+        interface_json_path = Path(m9a_folder) / "interface.json"
+        if interface_json_path.exists():
+            try:
+                import json
+                with open(interface_json_path, 'r', encoding='utf-8') as f:
+                    interface_data = json.load(f)
+                if 'version' in interface_data:
+                    version = interface_data['version']
+                    self.logger.info(f"从 interface.json 读取到版本号: {version}")
+            except (json.JSONDecodeError, IOError, OSError) as e:
+                self.logger.warning(f"读取 interface.json 失败: {e}")
+                # 继续使用传入的 version 参数
+
         if not version:
             self.logger.warning("版本号为空，跳过回写")
             return False
 
         # 从 M9A 路径中提取备份名
         m9a_path_obj = Path(m9a_folder)
-        drive_letter = m9a_path_obj.drive.replace(':', '')
+        drive_letter = m9a_path_obj.drive.replace(':','')
         folder_name = m9a_path_obj.name
         backup_name = f"{drive_letter}-{folder_name}"
 
