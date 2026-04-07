@@ -66,6 +66,6 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: M9A-Update-Assistant-Nuitka-${{ github.ref_name }}
-          path: build/M9A-Update-Assistant.exe
+          name: M9A_Update_Assistant-Nuitka-${{ github.ref_name }}
+          path: build/M9A_Update_Assistant.exe
           retention-days: 7
