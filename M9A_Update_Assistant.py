@@ -696,7 +696,9 @@ release_version = release
             'gui_keywords': gui_keywords if gui_keywords else ['Full']
         }
 
-    def find_download_url(self, release_info: Dict, pattern: str, select_smallest: bool = False) -> Optional[str]:
+    def find_download_url(self, release_info: Dict, pattern: str,
+                           select_smallest: bool = False,
+                           exclude_patterns: Optional[List[str]] = None) -> Optional[str]:
         """
         从 release 信息中查找匹配的下载链接
 
@@ -704,6 +706,7 @@ release_version = release
             release_info: GitHub release 信息
             pattern: 文件名匹配模式
             select_smallest: 是否在多个匹配项中选择最小的文件
+            exclude_patterns: 需要排除的文件名匹配模式列表
 
         Returns:
             下载 URL，如果未找到则返回 None
@@ -711,10 +714,19 @@ release_version = release
         assets = release_info.get('assets', [])
         matched_assets = []
 
+        def _matches_any(exclude_list: List[str], name: str) -> bool:
+            for ep in exclude_list:
+                if re.match(ep.replace('*', r'[\d.\-a-zA-Z]+'), name):
+                    return True
+            return False
+
+        exclude_list = exclude_patterns or []
+
         for asset in assets:
             asset_name = asset.get('name', '')
             if re.match(pattern.replace('*', r'[\d.\-a-zA-Z]+'), asset_name):
-                matched_assets.append(asset)
+                if not _matches_any(exclude_list, asset_name):
+                    matched_assets.append(asset)
 
         if not matched_assets:
             return None
@@ -896,7 +908,8 @@ release_version = release
 
         cli_url = self.find_download_url(release_info, cli_zip_pattern)
 
-        gui_url = self.find_download_url(release_info, 'M9A-win-x86_64-v*-*.zip', select_smallest=True)
+        gui_url = self.find_download_url(release_info, 'M9A-win-x86_64-v*-*.zip',
+                                          select_smallest=True, exclude_patterns=[cli_zip_pattern])
         if gui_url:
             gui_keyword = Path(gui_url).name.split('-')[-1].replace('.zip', '')
         else:
