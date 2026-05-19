@@ -156,6 +156,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 安装 UPX 压缩工具
+      - name: Setup UPX
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri 'https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-win64.zip' -OutFile upx.zip
+          Expand-Archive -Path upx.zip -DestinationPath .
+          "$env:GITHUB_WORKSPACE\upx-4.2.4-win64" | Out-File -FilePath $env:GITHUB_PATH -Append
+
       # 使用 Nuitka 编译为可执行文件
       - name: Build Executable with Nuitka
         uses: Nuitka/Nuitka-Action@main
@@ -169,7 +177,10 @@ jobs:
           output-dir: build
           include-package: requests,socks
           no-deployment-flag: self-execution
-          nofollow-import-to: '*.tests'
+          nofollow-import-to: '*.tests *.pytest *.unittest *.distutils *.setuptools *.pip *.tkinter *.email.mime *.http.server *.xmlrpc *.pydoc *.idlelib *.multiprocessing *.ctypes.test *.lib2to3 *.wsgiref *.ensurepip *.venv *.turtle *.turtledemo colorama.tests'
+          enable-plugin: upx
+          onefile-no-compression: true
+          include-windows-runtime-dlls: 'no'
 
       # 上传 Nuitka 编译的可执行文件作为 artifact
       - name: Upload Nuitka artifact
@@ -224,6 +235,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller
           pip install -r requirements.txt
+
+      # 安装 UPX 压缩工具
+      - name: Setup UPX
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri 'https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-win64.zip' -OutFile upx.zip
+          Expand-Archive -Path upx.zip -DestinationPath .
+          "$env:GITHUB_WORKSPACE\upx-4.2.4-win64" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       # 打包可执行文件（PyInstaller）
       - name: Build with PyInstaller
