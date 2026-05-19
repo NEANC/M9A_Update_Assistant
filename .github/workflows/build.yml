@@ -14,7 +14,7 @@ permissions:
   actions: write
 
 jobs:
-  # 准备步骤，用于代码检出、版本控制和版本号更新
+  # 准备步骤
   meta:
     name: Gather Meta Information
     runs-on: ubuntu-latest
@@ -95,20 +95,12 @@ jobs:
           cat CHANGELOG.md
           echo "===================="
 
-      # 更新版本号
-      - name: Update version in M9A_Update_Assistant.py
-        run: |
-          tag="${{ steps.set_tag.outputs.tag }}"
-          sed -i "s/VERSION = \"v[0-9]\+\.[0-9]\+\.[0-9]\+\"/VERSION = \"$tag\"/g" M9A_Update_Assistant.py
-          echo "Updated version to $tag in M9A_Update_Assistant.py"
-          cat M9A_Update_Assistant.py | grep "VERSION ="
-
-      # 上传更新后的代码作为 artifact
-      - name: Upload updated code
+      # 上传变更日志
+      - name: Upload Changelog
         uses: actions/upload-artifact@v4
         with:
-          name: updated-code
-          path: .
+          name: changelog
+          path: CHANGELOG.md
           retention-days: 7
 
   # Nuitka 构建
@@ -117,12 +109,16 @@ jobs:
     needs: meta
     runs-on: windows-latest
     steps:
-      # 下载更新后的代码
-      - name: Download updated code
-        uses: actions/download-artifact@v4
-        with:
-          name: updated-code
-          path: .
+      # 检出代码库
+      - name: Check-out repository
+        uses: actions/checkout@v4
+
+      # 写入版本号到源码
+      - name: Update version
+        shell: powershell
+        run: |
+          (Get-Content M9A_Update_Assistant.py) -replace '^(VERSION = )".*"', '${1}"${{ needs.meta.outputs.tag }}"' | Set-Content M9A_Update_Assistant.py
+          Select-String -Path M9A_Update_Assistant.py -Pattern '^VERSION\b'
 
       # 检查当前 Python 版本
       - name: Check Python
@@ -140,7 +136,7 @@ jobs:
             echo "skip_setup=false" >> $GITHUB_OUTPUT
           fi
 
-      # 设置 Python 环境（仅当当前版本不是 3.12 时）
+      # 设置 Python 环境（仅当版本不是 3.12 时）
       - name: Setup Python
         if: steps.check_python.outputs.skip_setup != 'true'
         uses: actions/setup-python@v5
@@ -182,7 +178,7 @@ jobs:
           onefile-no-compression: true
           include-windows-runtime-dlls: 'no'
 
-      # 上传 Nuitka 编译的可执行文件作为 artifact
+      # 上传 Nuitka 编译的可执行文件
       - name: Upload Nuitka artifact
         uses: actions/upload-artifact@v4
         with:
@@ -196,12 +192,16 @@ jobs:
     needs: meta
     runs-on: windows-latest
     steps:
-      # 下载更新后的代码
-      - name: Download updated code
-        uses: actions/download-artifact@v4
-        with:
-          name: updated-code
-          path: .
+      # 检出代码库
+      - name: Check-out repository
+        uses: actions/checkout@v4
+
+      # 写入版本号到源码
+      - name: Update version
+        shell: powershell
+        run: |
+          (Get-Content M9A_Update_Assistant.py) -replace '^(VERSION = )".*"', '${1}"${{ needs.meta.outputs.tag }}"' | Set-Content M9A_Update_Assistant.py
+          Select-String -Path M9A_Update_Assistant.py -Pattern '^VERSION\b'
 
       # 检查当前 Python 版本
       - name: Check Python
@@ -219,7 +219,7 @@ jobs:
             echo "skip_setup=false" >> $GITHUB_OUTPUT
           fi
 
-      # 设置 Python 环境（仅当当前版本不是 3.12 时）
+      # 设置 Python 环境（仅当版本不是 3.12 时）
       - name: Setup Python
         if: steps.check_python.outputs.skip_setup != 'true'
         uses: actions/setup-python@v5
@@ -249,7 +249,7 @@ jobs:
         run: |
           pyinstaller M9A_Update_Assistant.spec --noconfirm
 
-      # 上传 PyInstaller 打包的可执行文件作为 artifact
+      # 上传 PyInstaller 打包的可执行文件
       - name: Upload PyInstaller artifact
         uses: actions/upload-artifact@v4
         with:
@@ -287,8 +287,8 @@ jobs:
           fi
           
           # 复制变更日志
-          if [ -f "assets/updated-code/CHANGELOG.md" ]; then
-            cp -f "assets/updated-code/CHANGELOG.md" "release/CHANGELOG.md"
+          if [ -f "assets/changelog/CHANGELOG.md" ]; then
+            cp -f "assets/changelog/CHANGELOG.md" "release/CHANGELOG.md"
           fi
           
           # 清理临时目录
