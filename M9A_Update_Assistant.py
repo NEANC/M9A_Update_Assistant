@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
-import hashlib
 import os
 import re
 import sys
@@ -10,6 +9,8 @@ import json
 import shutil
 import logging
 import zipfile
+import hashlib
+import colorama
 import requests
 import configparser
 
@@ -37,6 +38,27 @@ def print_info():
     print("\n")
 
 
+class ColoredFormatter(logging.Formatter):
+    """带颜色的日志格式化器，仅作用于控制台输出"""
+
+    LEVEL_COLORS = {
+        'DEBUG': colorama.Fore.CYAN,
+        'INFO': colorama.Fore.WHITE,
+        'WARNING': colorama.Fore.YELLOW,
+        'ERROR': colorama.Fore.RED,
+        'CRITICAL': colorama.Back.RED + colorama.Fore.BLACK + colorama.Style.BRIGHT,
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        colorama.init(autoreset=True)
+
+    def format(self, record: logging.LogRecord) -> str:
+        color = self.LEVEL_COLORS.get(record.levelname, colorama.Fore.WHITE)
+        record.levelname = f"{color}{record.levelname:<8}{colorama.Style.RESET_ALL}"
+        return super().format(record)
+
+
 class M9AUpdateAssistant:
     """M9A 更新类，用于处理 M9A 的更新操作"""
 
@@ -62,11 +84,11 @@ class M9AUpdateAssistant:
         logger = logging.getLogger("M9AUpdateAssistant")
         logger.setLevel(logging.DEBUG)
 
-        formatter = logging.Formatter('%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s', datefmt='%H:%M:%S')
-
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(formatter)
+        console_formatter = ColoredFormatter('%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
+                                             datefmt='%H:%M:%S')
+        console_handler.setFormatter(console_formatter)
         logger.addHandler(console_handler)
 
         return logger

@@ -1,4 +1,7 @@
 # M9A Update Assistant 依赖项
+# 用于控制台彩色输出
+colorama>=0.4.6
+
 # 用于网络请求
 requests>=2.32.3
 
