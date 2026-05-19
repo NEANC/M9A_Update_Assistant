@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
-VERSION = "v1.9.0"
+VERSION = "v1.10.0"
 
 
 def print_info():
