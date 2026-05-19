@@ -55,8 +55,8 @@ class ColoredFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         color = self.LEVEL_COLORS.get(record.levelname, colorama.Fore.WHITE)
-        record.levelname = f"{color}{record.levelname:<8}{colorama.Style.RESET_ALL}"
-        return super().format(record)
+        result = super().format(record)
+        return f"{color}{result}{colorama.Style.RESET_ALL}"
 
 
 class M9AUpdateAssistant:
@@ -660,7 +660,7 @@ release_version = release
                     self.logger.error(f"未知的 release_version: {self.github_release_version}")
                     return None
 
-                self.logger.info(f"获取到最新版本: {release_info.get('tag_name', 'Unknown')}")
+                self.logger.info(f"GitHub 版本: {release_info.get('tag_name', 'Unknown')}")
                 return release_info
             except requests.RequestException as e:
                 self.logger.error(f"获取 GitHub release 信息失败: {e}")
@@ -1175,8 +1175,7 @@ release_version = release
         if is_pyinstaller:
             package_type = "PyInstaller"
 
-        self.logger.debug(f"PyInstaller: {is_pyinstaller}, Nuitka: {is_nuitka}, "
-                          f"py_script: {is_py_script}, bundled: {is_bundled}, type: {package_type}")
+        self.logger.debug(f"源码运行: {is_py_script}, 是否构建: {is_bundled}, 运行模式: {package_type}")
         return is_bundled, package_type
 
     def _version_to_tuple(self, v: str) -> Tuple[int, ...]:
@@ -1372,8 +1371,6 @@ release_version = release
             self.logger.critical("GitHub release 信息中未找到版本号，更新终止")
             return False
 
-        self.logger.info(f"GitHub 最新版本: {latest_version}")
-
         # 先对比各 M9A 本地版本，收集需要更新的文件夹
         outdated_folders = self._collect_outdated_folders(latest_version)
         if not outdated_folders:
@@ -1381,7 +1378,7 @@ release_version = release
             self._cleanup_old_logs()
             return True
 
-        self.logger.info(f"共 {len(outdated_folders)}/{len(self.m9a_folders)} 个 M9A 需要更新")
+        self.logger.info(f"共有 {len(outdated_folders)} 个 M9A 需要更新")
 
         cli_zip = None
         gui_zip = None
