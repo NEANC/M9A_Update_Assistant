@@ -1284,14 +1284,51 @@ release_version = release
         except Exception as e:
             self.logger.critical(f"回滚失败: {e}")
 
+    def _collect_outdated_folders(self, latest_version: str) -> List[str]:
+        """
+        对比各 M9A 文件夹本地版本与 GitHub 最新版本，收集需要更新的文件夹
+
+        Args:
+            latest_version: GitHub 最新版本号（如 v3.28.3）
+
+        Returns:
+            需要更新的 M9A 文件夹路径列表
+        """
+        latest_ver_tuple = self._version_to_tuple(latest_version)
+        if not latest_ver_tuple:
+            self.logger.warning(f"GitHub 版本号解析失败: {latest_version}，将更新所有 M9A")
+            return list(self.m9a_folders)
+
+        outdated = []
+        for m9a_folder in self.m9a_folders:
+            local_version = self._get_version_from_interface(m9a_folder)
+            if not local_version:
+                self.logger.info(f"未读取到本地版本号，将更新: {m9a_folder}")
+                outdated.append(m9a_folder)
+                continue
+
+            local_ver_tuple = self._version_to_tuple(local_version)
+            if not local_ver_tuple:
+                self.logger.info(f"本地版本号解析失败: {local_version}，将更新: {m9a_folder}")
+                outdated.append(m9a_folder)
+                continue
+
+            if local_ver_tuple >= latest_ver_tuple:
+                self.logger.info(f"已是最新版本 (本地={local_version}, GitHub={latest_version})，跳过: {m9a_folder}")
+            else:
+                self.logger.info(f"发现新版本 (本地={local_version}, GitHub={latest_version})，需要更新: {m9a_folder}")
+                outdated.append(m9a_folder)
+
+        return outdated
+
     def run_update(self) -> bool:
         """
         执行完整的更新流程
 
         执行完整的 M9A 更新流程，包括：
-        1. 从 GitHub 获取最新版本信息
+        1. 从 GitHub 获取最新版本信息并对比本地版本
         2. 下载 CLI 和 GUI ZIP 文件
-        3. 对每个 M9A 执行：
+        3. 对需要更新的 M9A 执行：
            - 备份配置文件
            - 清理 M9A 文件夹
            - 解压 CLI ZIP 文件
@@ -1302,6 +1339,27 @@ release_version = release
         Returns:
             bool: 操作是否成功
         """
+        self.logger.info("正在从 GitHub 获取最新版本信息...")
+        release_info = self.get_latest_release_info()
+        if not release_info:
+            self.logger.critical("无法获取 GitHub release 信息，更新终止")
+            return False
+
+        latest_version = release_info.get('tag_name', '')
+        if not latest_version:
+            self.logger.critical("GitHub release 信息中未找到版本号，更新终止")
+            return False
+
+        self.logger.info(f"GitHub 最新版本: {latest_version}")
+
+        # 先对比各 M9A 本地版本，收集需要更新的文件夹
+        outdated_folders = self._collect_outdated_folders(latest_version)
+        if not outdated_folders:
+            self.logger.info("所有 M9A 已是最新版本，无需更新")
+            self._cleanup_old_logs()
+            return True
+
+        self.logger.info(f"共 {len(outdated_folders)}/{len(self.m9a_folders)} 个 M9A 需要更新")
 
         cli_zip = None
         gui_zip = None
@@ -1343,9 +1401,9 @@ release_version = release
 
         # 遍历所有 M9A
         all_success = True
-        for index, m9a_folder in enumerate(self.m9a_folders, 1):
+        for index, m9a_folder in enumerate(outdated_folders, 1):
             print(f"\n")
-            self.logger.info(f"开始更新第 {index}/{len(self.m9a_folders)} 个 M9A: {m9a_folder}")
+            self.logger.info(f"开始更新第 {index}/{len(outdated_folders)} 个 M9A: {m9a_folder}")
 
             # 备份 config（如果存在）
             config_backup_successful = self.backup_config(m9a_folder, version)
@@ -1385,7 +1443,7 @@ release_version = release
         self._cleanup_old_logs()
 
         if all_success:
-            self.logger.info("所有 M9A 完成更新")
+            self.logger.info("所有需要更新的 M9A 已完成更新")
         else:
             self.logger.warning("部分 M9A 更新失败")
 
