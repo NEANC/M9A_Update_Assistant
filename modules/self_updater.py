@@ -146,7 +146,7 @@ class SelfUpdater:
             if self._version_newer_than(current_version, latest_version):
                 self.logger.info(f"检测到新版本: {latest_version}")
                 if self._is_build_tag(current_version):
-                    self.logger.info("当前为 build 版本，跳过更新")
+                    self.logger.info("当前为 Build 版本，跳过更新")
                     return False
             else:
                 cur_tuple = self.version_to_tuple(current_version)
