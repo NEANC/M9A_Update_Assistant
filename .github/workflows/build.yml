@@ -98,7 +98,7 @@ jobs:
         with:
           name: changelog
           path: CHANGELOG.md
-          retention-minutes: 30
+          retention-days: 1
 
   # Nuitka 构建
   build-nuitka:
