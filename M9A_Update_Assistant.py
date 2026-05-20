@@ -72,9 +72,12 @@ class M9AUpdateAssistant:
         self.logger = self._setup_logger()
         self.config = ConfigManager(config_file, self.logger)
 
+        if self._raw_read_save_enabled():
+            self.file_handler = self._add_file_logger()
+        else:
+            self.file_handler = None
+
         self.config.load()
-        if self.config.log_save_enabled:
-            self._setup_file_logger()
 
         self._github = GitHubReleaseClient(
             self.config.github_repo,
@@ -116,8 +119,20 @@ class M9AUpdateAssistant:
 
         return logger
 
-    def _setup_file_logger(self) -> None:
-        """设置文件日志记录器"""
+    def _raw_read_save_enabled(self) -> bool:
+        """在加载完整配置前，粗读配置文件判断是否启用日志保存"""
+        if not Path(self.config_file).exists():
+            return True
+        try:
+            import configparser
+            raw = configparser.ConfigParser()
+            raw.read(self.config_file, encoding='utf-8')
+            return raw.getboolean('Logs', 'save_enabled', fallback=True)
+        except Exception:
+            return True
+
+    def _add_file_logger(self) -> logging.FileHandler:
+        """添加文件日志记录器，始终挂载"""
         log_dir = Path("logs")
         log_dir.mkdir(exist_ok=True)
 
@@ -132,7 +147,9 @@ class M9AUpdateAssistant:
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
 
+        self.logger.debug(f"当前程序版本: {VERSION}")
         self.logger.info(f"日志文件已创建: {log_file}")
+        return file_handler
 
     def _cleanup_old_logs(self) -> None:
         """清理多余的日志文件"""
