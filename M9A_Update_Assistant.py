@@ -98,6 +98,8 @@ class M9AUpdateAssistant:
             self.logger,
         )
 
+        self.keep_temp = False
+
     def _setup_logger(self) -> logging.Logger:
         """
         设置日志记录器
@@ -444,7 +446,9 @@ class M9AUpdateAssistant:
 
             self.logger.info(f"M9A 更新完成: {m9a_folder}")
 
-        if not self._updater.clean_temp_folder(self.config.temp_folder):
+        if self.keep_temp:
+            self.logger.info("检查到 --not-delete 参数，保留临时文件夹")
+        elif not self._updater.clean_temp_folder(self.config.temp_folder):
             self.logger.warning("无法清理临时文件夹")
 
         self._cleanup_old_logs()
@@ -498,6 +502,9 @@ def main():
     try:
         print_info()
         assistant = M9AUpdateAssistant()
+
+        if '--not-delete' in sys.argv:
+            assistant.keep_temp = True
 
         if not assistant.validate_config():
             assistant.logger.critical("错误的配置，请修改配置文件后重新运行。")
