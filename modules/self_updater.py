@@ -137,16 +137,47 @@ class SelfUpdater:
             temp_dir = Path(self.temp_folder)
             temp_dir.mkdir(parents=True, exist_ok=True)
             tmp_path = temp_dir / "M9A_Update_Assistant_new.exe.tmp"
+            sha_path = temp_dir / "M9A_Update_Assistant_new.sha256"
 
-            self.logger.info(f"开始下载: {exe_url}")
-            if not download_manager.download_file_with_progress(exe_url, str(tmp_path)):
-                self.logger.error("下载失败")
-                return False
+            expected_sha256 = gh_client.get_exe_sha256_from_body(release_info, exe_name)
 
-            if not zip_manager.verify_exe_sha256(str(tmp_path), release_info, exe_name, gh_client):
-                self.logger.error("新版本校验失败，放弃更新")
+            if expected_sha256:
+                sha_path.write_text(expected_sha256, encoding='ascii')
+                self.logger.debug(f"已保存 SHA256 校验值: {sha_path}")
+
+            max_retries = 3
+            for attempt in range(max_retries):
+                if attempt > 0:
+                    self.logger.info(f"重试下载自更新文件（{attempt + 1}/{max_retries}）")
+                else:
+                    self.logger.info(f"开始下载: {exe_url}")
+
+                if not download_manager.download_file_with_progress(exe_url, str(tmp_path)):
+                    self.logger.error("下载失败")
+                    continue
+
+                if not expected_sha256:
+                    expected_sha256 = gh_client.get_exe_sha256_from_body(release_info, exe_name)
+
+                if expected_sha256:
+                    if zip_manager.verify_file_sha256(str(tmp_path), expected_sha256):
+                        sha_path.write_text(expected_sha256, encoding='ascii')
+                        break
+                    self.logger.error("SHA256 校验失败，准备重试")
+                    continue
+
+                if attempt == max_retries - 1:
+                    self.logger.error("release body 中未找到 SHA256 校验值，已重试 3 次，放弃更新")
+                # will continue to next attempt
+
+            else:
+                self.logger.error("自更新下载校验失败，已达到最大重试次数，跳过更新")
                 try:
                     tmp_path.unlink()
+                except Exception:
+                    pass
+                try:
+                    sha_path.unlink()
                 except Exception:
                     pass
                 return False
@@ -196,22 +227,38 @@ class SelfUpdater:
         self.logger.debug(f"自更新脚本已生成: {script_path}")
         return str(script_path)
 
-    def perform(self) -> None:
+    def perform(self, zip_manager=None) -> None:
         """
         执行自身更新替换
 
-        1. 校验 new.exe.tmp 仍然有效
+        1. 重新校验 new.exe.tmp 的 SHA256
         2. 将当前 exe 重命名为 .bak
         3. 将 new.exe.tmp 移动为当前 exe
         4. 启动新 exe --self-update-complete
         """
         tmp_path = Path(self.temp_folder) / "M9A_Update_Assistant_new.exe.tmp"
+        sha_path = Path(self.temp_folder) / "M9A_Update_Assistant_new.sha256"
         current_exe = Path(sys.executable)
         backup_exe = current_exe.with_suffix('.exe.bak')
 
         if not tmp_path.exists():
             self.logger.critical(f"更新文件不存在: {tmp_path}")
             sys.exit(1)
+
+        if zip_manager and sha_path.exists():
+            expected = sha_path.read_text(encoding='ascii').strip()
+            self.logger.info("重新校验更新文件完整性...")
+            if not zip_manager.verify_file_sha256(str(tmp_path), expected):
+                self.logger.critical("更新文件校验失败，放弃更新")
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+                try:
+                    sha_path.unlink()
+                except Exception:
+                    pass
+                sys.exit(1)
 
         self.logger.info(f"开始替换: {current_exe}")
 
@@ -223,6 +270,9 @@ class SelfUpdater:
 
             tmp_path.rename(current_exe)
             self.logger.info(f"已替换: {current_exe}")
+
+            if sha_path.exists():
+                sha_path.unlink()
 
             self.logger.info("启动新版本完成更新...")
             subprocess.Popen(

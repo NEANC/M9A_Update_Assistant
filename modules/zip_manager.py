@@ -75,7 +75,8 @@ class ZipManager:
             return False
 
     def verify_exe_sha256(self, file_path: str, release_info: Dict,
-                           exe_name: str, gh_client: GitHubReleaseClient) -> bool:
+                           exe_name: str, gh_client: GitHubReleaseClient,
+                           allow_fallback: bool = True) -> bool:
         """
         校验 EXE 文件的 SHA256 哈希值
 
@@ -84,14 +85,40 @@ class ZipManager:
             release_info: release 信息
             exe_name: EXE 文件名
             gh_client: GitHubReleaseClient 实例
+            allow_fallback: 是否允许在未找到 SHA256 时跳过校验
 
         Returns:
             校验是否通过
         """
         expected = gh_client.get_exe_sha256_from_body(release_info, exe_name)
         if not expected:
-            self.logger.info("release body 中未找到 SHA256 校验值，跳过校验")
-            return True
+            if allow_fallback:
+                self.logger.info("release body 中未找到 SHA256 校验值，跳过校验")
+                return True
+            self.logger.error("release body 中未找到 SHA256 校验值")
+            return False
+        actual = self.calculate_sha256(file_path)
+        if actual != expected:
+            self.logger.error("SHA256 校验失败:")
+            self.logger.warning(f"GitHub: {expected}")
+            self.logger.warning(f"本地:   {actual}")
+            return False
+        self.logger.info("SHA256 校验成功")
+        self.logger.info(f"GitHub: {expected}")
+        self.logger.info(f"本地:   {actual}")
+        return True
+
+    def verify_file_sha256(self, file_path: str, expected: str) -> bool:
+        """
+        使用已知期望值校验文件 SHA256
+
+        Args:
+            file_path: 文件路径
+            expected: 期望的 SHA256 值
+
+        Returns:
+            校验是否通过
+        """
         actual = self.calculate_sha256(file_path)
         if actual != expected:
             self.logger.error("SHA256 校验失败:")

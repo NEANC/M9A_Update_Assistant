@@ -253,7 +253,8 @@ class M9AUpdateAssistant:
 
         need_gui_download = True
         cli_zip_path = downloaded_files[0]
-        if self._zip.check_lite_zip_has_deps(cli_zip_path):
+        cli_has_deps = self._zip.check_lite_zip_has_deps(cli_zip_path)
+        if cli_has_deps:
             need_gui_download = False
             self.logger.info("CLI ZIP 已包含 deps 文件夹，跳过 GUI ZIP 下载")
         elif not self.config.github_full_download_enabled:
@@ -278,6 +279,7 @@ class M9AUpdateAssistant:
             'cli_keyword': cli_keyword,
             'gui_keyword': gui_keyword,
             'version': tag_name,
+            'cli_has_deps': cli_has_deps,
         }
 
     def _check_or_download_zip(self, url: str, save_path: Path, release_info: Dict,
@@ -333,6 +335,7 @@ class M9AUpdateAssistant:
         cli_zip = None
         gui_zip = None
         version = ''
+        cli_has_deps = None
 
         download_result = self._download_latest_release(release_info)
         if download_result:
@@ -340,6 +343,7 @@ class M9AUpdateAssistant:
             cli_keyword = download_result['cli_keyword']
             gui_keyword = download_result['gui_keyword']
             version = download_result.get('version', '')
+            cli_has_deps = download_result.get('cli_has_deps')
 
             for file_path in downloaded_files:
                 if cli_keyword in file_path:
@@ -350,6 +354,7 @@ class M9AUpdateAssistant:
             self.logger.warning("从 GitHub 下载失败，尝试使用本地文件")
 
         if not cli_zip:
+            cli_has_deps = None
             cli_zip = self._updater.find_lite_zip(
                 self.config.cli_zip_pattern, self.config.temp_folder, self._github,
             )
@@ -360,7 +365,9 @@ class M9AUpdateAssistant:
         self.logger.info(f"使用 CLI ZIP 文件: {cli_zip}")
 
         need_extract_deps = True
-        if self._zip.check_lite_zip_has_deps(cli_zip):
+        if cli_has_deps is None:
+            cli_has_deps = self._zip.check_lite_zip_has_deps(cli_zip)
+        if cli_has_deps:
             need_extract_deps = False
             self.logger.info("CLI ZIP 已包含 deps 文件夹，跳过 deps 提取")
         elif not gui_zip:
@@ -427,7 +434,7 @@ class M9AUpdateAssistant:
 
     def self_update_perform(self) -> None:
         """执行自身更新替换"""
-        self._self_update.perform()
+        self._self_update.perform(self._zip)
 
 
 def main():
@@ -437,18 +444,19 @@ def main():
         print_info()
         assistant.logger.info("自更新完成，正在验证...")
 
+        # 轻量 health-check：验证配置和关键模块可用
         if not assistant.validate_config():
             assistant.logger.critical("配置验证失败!")
             SelfUpdater.rollback()
             sys.exit(1)
+        assistant.logger.info("新版本验证通过")
 
         bak_path = Path(sys.executable).with_suffix('.exe.bak')
         if bak_path.exists():
             bak_path.unlink()
             assistant.logger.info(f"已删除备份文件: {bak_path}")
 
-        assistant._cleanup_old_logs()
-        assistant.logger.info("自更新验证通过，程序已就绪")
+        assistant.logger.info("自更新完成，程序已就绪")
         print(f"\n")
         return
 

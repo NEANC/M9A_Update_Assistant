@@ -181,6 +181,51 @@ class TestVerifyExeSha256(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_no_body_strict(self):
+        """allow_fallback=False 时无 SHA256 应失败"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.exe') as f:
+            f.write(b'test')
+            path = f.name
+        try:
+            result = self.zip_mgr.verify_exe_sha256(
+                path, {'body': ''}, 'test.exe', self.gh_client, allow_fallback=False,
+            )
+            self.assertFalse(result)
+        finally:
+            os.unlink(path)
+
+
+class TestVerifyFileSha256(unittest.TestCase):
+    """verify_file_sha256 测试"""
+
+    def setUp(self):
+        self.logger = logging.getLogger("TestZip")
+        self.logger.setLevel(logging.CRITICAL)
+        self.zip_mgr = ZipManager(self.logger)
+
+    def test_match(self):
+        """SHA256 匹配"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
+            f.write(b'data to verify')
+            path = f.name
+        try:
+            expected = ZipManager.calculate_sha256(path)
+            self.assertTrue(self.zip_mgr.verify_file_sha256(path, expected))
+        finally:
+            os.unlink(path)
+
+    def test_mismatch(self):
+        """SHA256 不匹配"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
+            f.write(b'real data')
+            path = f.name
+        try:
+            self.assertFalse(self.zip_mgr.verify_file_sha256(
+                path, '0000000000000000000000000000000000000000000000000000000000000000',
+            ))
+        finally:
+            os.unlink(path)
+
 
 class TestCheckLiteZipHasDeps(unittest.TestCase):
     """check_lite_zip_has_deps 测试"""
