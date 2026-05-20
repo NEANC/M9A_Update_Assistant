@@ -98,6 +98,8 @@ class M9AUpdateAssistant:
             self.logger,
         )
 
+        self.keep_temp = False
+
     def _setup_logger(self) -> logging.Logger:
         """
         设置日志记录器
@@ -168,7 +170,7 @@ class M9AUpdateAssistant:
                 log_file.unlink()
                 self.logger.info(f"已删除多余的日志文件: {log_file}")
             except Exception as e:
-                self.logger.warning(f"删除日志文件 {log_file} 失败: {e}")
+                self.logger.error(f"删除日志文件 {log_file} 失败: {e}")
 
     def validate_config(self) -> bool:
         """验证配置"""
@@ -186,27 +188,27 @@ class M9AUpdateAssistant:
         """
         latest_ver_tuple = SelfUpdater.version_to_tuple(latest_version)
         if not latest_ver_tuple:
-            self.logger.warning(f"GitHub 版本号解析失败: {latest_version}，将更新所有 M9A")
+            self.logger.error(f"GitHub 版本号解析失败: {latest_version}，将强制更新所有 M9A")
             return list(self.config.m9a_folders)
 
         outdated = []
         for m9a_folder in self.config.m9a_folders:
             local_version = M9AUpdater.get_version_from_interface(m9a_folder)
             if not local_version:
-                self.logger.info(f"未读取到本地版本号，将更新: {m9a_folder}")
+                self.logger.warning(f"{m9a_folder} 未读取到本地版本号，将强制更新到 {latest_version}")
                 outdated.append(m9a_folder)
                 continue
 
             local_ver_tuple = SelfUpdater.version_to_tuple(local_version)
             if not local_ver_tuple:
-                self.logger.info(f"本地版本号解析失败: {local_version}，将更新: {m9a_folder}")
+                self.logger.warning(f"{m9a_folder} 本地版本号解析失败: {local_version}，将强制更新到 {latest_version}")
                 outdated.append(m9a_folder)
                 continue
 
             if local_ver_tuple >= latest_ver_tuple:
-                self.logger.info(f"已是最新版本 (本地={local_version}, GitHub={latest_version})，跳过: {m9a_folder}")
+                self.logger.info(f"{m9a_folder} 已是最新版本，跳过更新")
             else:
-                self.logger.info(f"发现新版本 (本地={local_version}, GitHub={latest_version})，需要更新: {m9a_folder}")
+                self.logger.info(f"{m9a_folder} 将更新到 {latest_version}")
                 outdated.append(m9a_folder)
 
         return outdated
@@ -252,20 +254,18 @@ class M9AUpdateAssistant:
             gui_keyword = gui_keywords[0] if gui_keywords else 'Full'
 
         downloaded_files = []
-        version_pattern = tag_name.replace('v', '')
 
         if cli_url:
             cli_filename = Path(cli_url).name
             cli_save_path = download_dir / cli_filename
-            cli_match = cli_zip_pattern.replace('*', version_pattern)
             cli_path = self._check_or_download_zip(
-                cli_url, cli_save_path, release_info, cli_filename, download_dir, cli_match,
+                cli_url, cli_save_path, release_info, cli_filename, download_dir, tag_name,
             )
             if not cli_path:
                 return None
             downloaded_files.append(cli_path)
         else:
-            self.logger.error(f"未找到匹配的 CLI ZIP 文件: {cli_zip_pattern}")
+            self.logger.warning(f"未找到匹配的 CLI ZIP 文件: {cli_zip_pattern}")
             return None
 
         need_gui_download = True
@@ -274,22 +274,18 @@ class M9AUpdateAssistant:
         if cli_has_deps:
             need_gui_download = False
             self.logger.info("CLI ZIP 已包含 deps 文件夹，跳过 GUI ZIP 下载")
-        elif not self.config.github_full_download_enabled:
-            need_gui_download = False
-            self.logger.info("配置中禁用了 GUI 版本下载，跳过 GUI ZIP 下载")
 
         if need_gui_download and gui_url:
             gui_filename = Path(gui_url).name
             gui_save_path = download_dir / gui_filename
-            gui_match = f"M9A-win-x86_64-v{version_pattern}-{gui_keyword}.zip"
             gui_path = self._check_or_download_zip(
-                gui_url, gui_save_path, release_info, gui_filename, download_dir, gui_match,
+                gui_url, gui_save_path, release_info, gui_filename, download_dir, tag_name,
             )
             if not gui_path:
                 return None
             downloaded_files.append(gui_path)
-        elif not need_gui_download:
-            self.logger.info("跳过 GUI ZIP 下载")
+        elif need_gui_download:
+            self.logger.critical("未找到匹配的 GUI ZIP 文件，跳过 deps 提取")
 
         return {
             'files': downloaded_files,
@@ -301,30 +297,41 @@ class M9AUpdateAssistant:
 
     def _check_or_download_zip(self, url: str, save_path: Path, release_info: Dict,
                                 zip_filename: str, download_dir: Path,
-                                match_pattern: str) -> Optional[str]:
+                                tag_name: str) -> Optional[str]:
         """
         检查缓存或下载 ZIP 文件，并进行完整性校验
+        缓存匹配优先使用 ZIP 内部 interface.json 的版本号
         """
-        cached_files = list(download_dir.glob(match_pattern))
-        if cached_files:
-            cached_path = str(cached_files[0])
-            self.logger.info(f"临时文件夹中已存在最新版本: {cached_path}")
-            if self._zip.verify_zip_integrity(cached_path, release_info, zip_filename, self._github):
-                return cached_path
-            self.logger.error("缓存文件校验失败，将重新下载")
+        for candidate in download_dir.glob('M9A-win-x86_64-v*-*.zip'):
+            cached_version = ZipManager.get_zip_version(str(candidate))
+            if cached_version and cached_version == tag_name:
+                self.logger.info(f"临时文件夹存在缓存文件 {cached_version}: {candidate}")
+                if self._zip.verify_zip_integrity(str(candidate), release_info, zip_filename, self._github):
+                    return str(candidate)
+                self.logger.warning("缓存文件校验失败，将重新下载")
+            elif cached_version:
+                self.logger.debug(f"缓存版本 {cached_version} 与目标 {tag_name} 不匹配: {candidate}")
 
-        if not self._download.download_file_with_progress(url, str(save_path)):
-            return None
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            if attempt > 0:
+                self.logger.info(f"重新下载（第 {attempt + 1}/{max_attempts} 次）...")
 
-        if not self._zip.verify_zip_integrity(str(save_path), release_info, zip_filename, self._github):
-            self.logger.error("下载文件校验失败")
+            if not self._download.download_file_with_progress(url, str(save_path)):
+                self.logger.error("下载失败")
+                continue
+
+            if self._zip.verify_zip_integrity(str(save_path), release_info, zip_filename, self._github):
+                return str(save_path)
+
+            self.logger.warning("下载文件校验失败，准备重试")
             try:
                 save_path.unlink()
             except Exception:
                 pass
-            return None
 
-        return str(save_path)
+        self.logger.critical("下载文件校验失败，已达到最大重试次数")
+        return None
 
     def run_update(self) -> bool:
         """
@@ -349,7 +356,9 @@ class M9AUpdateAssistant:
 
         self.logger.info(f"共有 {len(outdated_folders)} 个 M9A 需要更新")
 
-        cli_zip = None
+        cli_zip = self._updater.find_lite_zip(
+            self.config.cli_zip_pattern, self.config.temp_folder, self._github, latest_version,
+        )
         gui_zip = None
         version = ''
         cli_has_deps = None
@@ -367,15 +376,21 @@ class M9AUpdateAssistant:
                     cli_zip = file_path
                 elif gui_keyword in file_path:
                     gui_zip = file_path
+        elif cli_zip:
+            self.logger.warning("从 GitHub 下载失败，使用本地已有文件")
+            if not self._zip.verify_zip_integrity(cli_zip, release_info, Path(cli_zip).name, self._github):
+                self.logger.critical("本地缓存文件校验失败，更新终止")
+                return False
         else:
-            self.logger.warning("从 GitHub 下载失败，尝试使用本地文件")
-
-        if not cli_zip:
-            cli_has_deps = None
-            cli_zip = self._updater.find_lite_zip(
+            info = self._updater.find_lite_zip(
                 self.config.cli_zip_pattern, self.config.temp_folder, self._github,
             )
-            if not cli_zip:
+            if info:
+                if not self._zip.verify_zip_integrity(info, release_info, Path(info).name, self._github):
+                    self.logger.critical("本地缓存文件校验失败，更新终止")
+                    return False
+                cli_zip = info
+            else:
                 self.logger.critical("未找到 CLI ZIP 文件，更新终止")
                 return False
 
@@ -398,7 +413,7 @@ class M9AUpdateAssistant:
 
             config_backup_successful = self._updater.backup_config(m9a_folder, version)
             if not config_backup_successful:
-                self.logger.info("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
+                self.logger.warning("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
 
             if not self._updater.clean_m9a_folder(m9a_folder):
                 self.logger.critical(f"清理 M9A 文件夹失败: {m9a_folder}")
@@ -431,7 +446,9 @@ class M9AUpdateAssistant:
 
             self.logger.info(f"M9A 更新完成: {m9a_folder}")
 
-        if not self._updater.clean_temp_folder(self.config.temp_folder):
+        if self.keep_temp:
+            self.logger.info("检查到 --not-delete 参数，保留临时文件夹")
+        elif not self._updater.clean_temp_folder(self.config.temp_folder):
             self.logger.warning("无法清理临时文件夹")
 
         self._cleanup_old_logs()
@@ -485,6 +502,9 @@ def main():
     try:
         print_info()
         assistant = M9AUpdateAssistant()
+
+        if '--not-delete' in sys.argv:
+            assistant.keep_temp = True
 
         if not assistant.validate_config():
             assistant.logger.critical("错误的配置，请修改配置文件后重新运行。")

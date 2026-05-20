@@ -2,6 +2,7 @@
 # -_- coding: utf-8 -_-
 
 import hashlib
+import json
 import logging
 import os
 import zipfile
@@ -197,6 +198,29 @@ class ZipManager:
         except (zipfile.BadZipFile, IOError, OSError) as e:
             self.logger.error(f"检查 CLI ZIP 文件失败: {e}")
             return False
+
+    @staticmethod
+    def get_zip_version(zip_path: str) -> Optional[str]:
+        """
+        从 ZIP 文件内的 interface.json 读取版本号
+
+        Args:
+            zip_path: ZIP 文件路径
+
+        Returns:
+            版本号字符串（如 v3.28.3），读取失败返回 None
+        """
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                candidates = [n for n in zf.namelist() if n.endswith('interface.json')]
+                for name in candidates:
+                    data = json.loads(zf.read(name).decode('utf-8'))
+                    version = data.get('version')
+                    if version:
+                        return version
+                return None
+        except Exception:
+            return None
 
     def extract_deps_from_full_zip(self, gui_zip_file: str, m9a_folder: str,
                                     gui_zip_pattern: str,

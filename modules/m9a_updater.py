@@ -44,7 +44,7 @@ class M9AUpdater:
                 interface_data = json.load(f)
             version = interface_data.get('version', fallback_version)
             if version and version != fallback_version:
-                logging.getLogger("M9AUpdateAssistant").info(f"从 interface.json 读取到版本号: {version}")
+                logging.getLogger("M9AUpdateAssistant").info(f"从 {m9a_folder} 的 interface.json 获取到版本号: {version}")
             return version
         except (json.JSONDecodeError, IOError, OSError) as e:
             logging.getLogger("M9AUpdateAssistant").warning(f"读取 interface.json 失败: {e}")
@@ -211,29 +211,43 @@ class M9AUpdater:
             return False
 
     def find_lite_zip(self, cli_zip_pattern: str, temp_folder: str,
-                       gh_client) -> Optional[str]:
+                       gh_client, target_version: str = '') -> Optional[str]:
         """
-        查找匹配的 CLI ZIP 文件
+        查找匹配的 CLI ZIP 文件，优先通过内部 interface.json 版本号匹配
 
         Args:
-            cli_zip_pattern: CLI ZIP 匹配模式
+            cli_zip_pattern: CLI ZIP 匹配模式（备选，版本匹配失败时回退）
             temp_folder: 临时文件夹
             gh_client: GitHubReleaseClient 实例（用于 compile_pattern）
+            target_version: 目标版本号（如 v3.28.3），为空时不进行版本匹配
 
         Returns:
             找到的 ZIP 文件路径，如果未找到则返回 None
         """
+        from modules.zip_manager import ZipManager
+
         cli_zip_regex = gh_client.compile_pattern(cli_zip_pattern)
-        search_dirs = [Path(temp_folder), Path.cwd()]
-        cli_zip_files = []
+        search_dirs = [Path(temp_folder) / "ZIP", Path(temp_folder), Path.cwd()]
+        all_zips = []
 
         for search_dir in search_dirs:
             if search_dir.exists():
-                cli_zip_files.extend([f for f in search_dir.glob('M9A-win-x86_64-v*-*.zip')
-                                      if cli_zip_regex.match(f.name)])
+                all_zips.extend(list(search_dir.glob('M9A-win-x86_64-v*-*.zip')))
 
-        if not cli_zip_files:
+        if target_version:
+            for candidate in all_zips:
+                version = ZipManager.get_zip_version(str(candidate))
+                if version and version == target_version:
+                    self.logger.info(f"缓存 ZIP 版本 {version} 匹配: {candidate}")
+                    return str(candidate)
+
+        for candidate in all_zips:
+            if cli_zip_regex.match(candidate.name):
+                self.logger.info(f"使用文件名匹配缓存 ZIP: {candidate}")
+                return str(candidate)
+
+        if not all_zips:
+            self.logger.debug(f"未找到任何 M9A ZIP 文件")
+        else:
             self.logger.warning(f"未找到匹配的 CLI ZIP 文件: {cli_zip_pattern}")
-            return None
-
-        return str(cli_zip_files[0])
+        return None
