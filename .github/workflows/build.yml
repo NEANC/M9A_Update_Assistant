@@ -33,11 +33,9 @@ jobs:
         id: set_tag
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            # For tag pushes, use the tag name
             tag="${{ github.ref_name }}"
           else
-            # For PRs and branch pushes, use git describe or fallback
-            tag=$(git describe --tags --match "v*" HEAD 2>/dev/null || echo "v0.0.1-$(git rev-parse --short HEAD)")
+            tag=$(git describe --tags --match "v*" HEAD 2>/dev/null | sed 's/-g/-build./' || echo "v0.0.1-build.$(git rev-parse --short HEAD)")
           fi
           echo "tag=${tag}" | tee -a $GITHUB_OUTPUT
 
@@ -66,22 +64,22 @@ jobs:
               git log --oneline "$previous_tag..HEAD" | grep -v "Merge pull request" > full_commits.txt
               # 计算提交数量
               total_commits=$(wc -l < full_commits.txt)
-              # 只取前15个提交
-              head -15 full_commits.txt > CHANGELOG.md
-              # 如果提交数量超过15个，添加Full Changelog链接
-              if [[ $total_commits -gt 15 ]]; then
+              # 只取前8个提交
+              head -8 full_commits.txt > CHANGELOG.md
+              # 如果提交数量超过8个，添加Full Changelog链接
+              if [[ $total_commits -gt 8 ]]; then
                 echo "" >> CHANGELOG.md
                 echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$previous_tag...${{ steps.set_tag.outputs.tag }}" >> CHANGELOG.md
               fi
             else
               echo "First release, no previous tag found"
-              # 首次发布，只取前15个提交
-              git log --oneline | grep -v "Merge pull request" | head -15 > CHANGELOG.md
+              # 首次发布，只取前8个提交
+              git log --oneline | grep -v "Merge pull request" | head -8 > CHANGELOG.md
             fi
           else
             echo "Generating changelog for development build"
-            # 开发构建，只取前15个提交
-            git log --oneline --since="1 week ago" | grep -v "Merge pull request" | head -15 > CHANGELOG.md
+            # 开发构建，只取前8个提交
+            git log --oneline --since="1 week ago" | grep -v "Merge pull request" | head -8 > CHANGELOG.md
           fi
           
           # Add header to changelog
