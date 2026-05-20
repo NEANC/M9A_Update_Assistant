@@ -59,14 +59,24 @@ class TestGetBackupName(unittest.TestCase):
     """get_backup_name 静态方法测试"""
 
     def test_standard_path(self):
-        """标准路径 Z:\\M9A"""
-        name = M9AUpdater.get_backup_name(r'Z:\M9A')
-        self.assertEqual(name, 'Z-M9A')
+        """标准路径"""
+        import platform
+        if platform.system() == 'Windows':
+            name = M9AUpdater.get_backup_name(r'C:\M9A')
+            self.assertEqual(name, 'C-M9A')
+        else:
+            name = M9AUpdater.get_backup_name('/home/user/M9A')
+            self.assertEqual(name, '-M9A')
 
     def test_path_with_sub(self):
         """多级路径"""
-        name = M9AUpdater.get_backup_name(r'D:\Games\M9A2')
-        self.assertEqual(name, 'D-M9A2')
+        import platform
+        if platform.system() == 'Windows':
+            name = M9AUpdater.get_backup_name(r'D:\Games\M9A2')
+            self.assertEqual(name, 'D-M9A2')
+        else:
+            name = M9AUpdater.get_backup_name('/opt/games/M9A2')
+            self.assertEqual(name, '-M9A2')
 
     def test_no_drive_letter(self):
         """无盘符（UNC 路径）"""

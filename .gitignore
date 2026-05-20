@@ -181,3 +181,4 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 /更新前存档
+/测试存档
