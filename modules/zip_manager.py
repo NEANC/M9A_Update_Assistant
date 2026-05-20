@@ -50,7 +50,10 @@ class ZipManager:
         """
         try:
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.namelist()
+                bad_file = zip_ref.testzip()
+                if bad_file is not None:
+                    self.logger.error(f"ZIP CRC 校验失败，损坏的文件: {bad_file}")
+                    return False
 
             expected_sha256 = gh_client.get_asset_sha256(release_info, zip_filename)
             if expected_sha256:
