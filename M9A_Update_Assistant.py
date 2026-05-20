@@ -718,6 +718,20 @@ release_version = release
             'gui_keywords': gui_keywords if gui_keywords else ['Full']
         }
 
+    @staticmethod
+    def _compile_pattern(pattern: str) -> re.Pattern:
+        """
+        将通配符模式编译为正则表达式
+
+        Args:
+            pattern: 含 * 通配符的模式串（如 M9A-win-x86_64-v*-Lite.zip）
+
+        Returns:
+            编译后的正则对象，匹配完整文件名
+        """
+        escaped = re.escape(pattern).replace(r'\*', r'.+')
+        return re.compile('^' + escaped + '$')
+
     def find_download_url(self, release_info: Dict, pattern: str,
                            select_smallest: bool = False,
                            exclude_patterns: Optional[List[str]] = None) -> Optional[str]:
@@ -735,20 +749,14 @@ release_version = release
         """
         assets = release_info.get('assets', [])
         matched_assets = []
-
-        def _matches_any(exclude_list: List[str], name: str) -> bool:
-            for ep in exclude_list:
-                if re.match(ep.replace('*', r'[\d.\-a-zA-Z]+'), name):
-                    return True
-            return False
-
-        exclude_list = exclude_patterns or []
+        exclude_regexes = [self._compile_pattern(ep) for ep in (exclude_patterns or [])]
 
         for asset in assets:
             asset_name = asset.get('name', '')
-            if re.match(pattern.replace('*', r'[\d.\-a-zA-Z]+'), asset_name):
-                if not _matches_any(exclude_list, asset_name):
-                    matched_assets.append(asset)
+            if self._compile_pattern(pattern).match(asset_name):
+                if any(rx.match(asset_name) for rx in exclude_regexes):
+                    continue
+                matched_assets.append(asset)
 
         if not matched_assets:
             return None
@@ -1090,8 +1098,7 @@ release_version = release
         if full_zip_path and os.path.exists(full_zip_path):
             gui_zip_file = Path(full_zip_path)
         else:
-            pattern = self.gui_zip_pattern.replace('*', r'[\d.]+')
-            gui_zip_regex = re.compile(pattern)
+            gui_zip_regex = self._compile_pattern(self.gui_zip_pattern)
 
             search_dirs = [Path(self.temp_folder), Path.cwd()]
             gui_zip_files = []
@@ -1146,8 +1153,7 @@ release_version = release
         Returns:
             找到的 ZIP 文件路径，如果未找到则返回 None
         """
-        pattern = self.cli_zip_pattern.replace('*', r'[\d.]+')
-        cli_zip_regex = re.compile(pattern)
+        cli_zip_regex = self._compile_pattern(self.cli_zip_pattern)
 
         # 搜索目录：临时文件夹和当前目录
         search_dirs = [Path(self.temp_folder), Path.cwd()]
