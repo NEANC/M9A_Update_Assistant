@@ -3,6 +3,7 @@
 
 import logging
 import os
+import re
 import subprocess
 import sys
 import requests
@@ -57,11 +58,58 @@ class SelfUpdater:
 
     @staticmethod
     def version_to_tuple(v: str) -> Tuple[int, ...]:
-        """将版本号字符串转换为元组用于比较"""
+        """将版本号字符串转换为元组用于比较，兼容预发布标签"""
+        PRERELEASE_WEIGHT = {'alpha': 1, 'beta': 2, 'rc': 3}
+
         try:
-            return tuple(map(int, v.lstrip('v').split('.')))
+            v = v.lstrip('v').split('-')[0]
+            core = tuple(map(int, v.split('.')))
+            return core
         except Exception:
             return ()
+
+    def _is_prerelease(self, v: str) -> bool:
+        """检查版本号是否为预发布版本"""
+        return bool(re.search(r'-(alpha|beta|rc)', v))
+
+    def _version_newer_than(self, current: str, latest: str) -> bool:
+        """
+        比较版本号，latest 是否比 current 新
+
+        预发布 → 正式版始终视为升级
+        alpha < beta < rc < stable
+        """
+        cur_tuple = self.version_to_tuple(current)
+        lat_tuple = self.version_to_tuple(latest)
+        if not cur_tuple or not lat_tuple:
+            return False
+
+        if cur_tuple < lat_tuple:
+            return True
+        if cur_tuple > lat_tuple:
+            return False
+
+        cur_pre = self._is_prerelease(current)
+        lat_pre = self._is_prerelease(latest)
+
+        if not cur_pre and lat_pre:
+            return False
+        if cur_pre and not lat_pre:
+            return True
+        if cur_pre and lat_pre:
+            cur_weight = self._prerelease_weight(current)
+            lat_weight = self._prerelease_weight(latest)
+            return lat_weight > cur_weight
+        return False
+
+    @staticmethod
+    def _prerelease_weight(v: str) -> int:
+        """返回预发布标签权重：alpha=1, beta=2, rc=3"""
+        match = re.search(r'-(alpha|beta|rc)', v)
+        if not match:
+            return 0
+        kind = match.group(1)
+        return {'alpha': 1, 'beta': 2, 'rc': 3}.get(kind, 0)
 
     def check_self_update(self, current_version: str, gh_client: GitHubReleaseClient,
                            download_manager: DownloadManager,
@@ -75,7 +123,6 @@ class SelfUpdater:
         Returns:
             bool: 是否需要退出以完成更新
         """
-        print(f"\n")
         self.logger.info("开始检查程序版本更新...")
 
         is_bundled, package_type = self.detect_package_type()
@@ -93,16 +140,15 @@ class SelfUpdater:
             release_info = response.json()
 
             latest_version = release_info.get('tag_name', '')
-            current_ver_tuple = self.version_to_tuple(current_version)
-            latest_ver_tuple = self.version_to_tuple(latest_version)
-
-            if current_ver_tuple and latest_ver_tuple:
-                if current_ver_tuple >= latest_ver_tuple:
-                    self.logger.info("当前版本已最新")
-                    return False
+            if self._version_newer_than(current_version, latest_version):
                 self.logger.info(f"检测到新版本: {latest_version}")
             else:
-                self.logger.warning("版本号校验错误，跳过更新")
+                cur_tuple = self.version_to_tuple(current_version)
+                lat_tuple = self.version_to_tuple(latest_version)
+                if cur_tuple and lat_tuple:
+                    self.logger.info("当前版本已最新")
+                else:
+                    self.logger.warning("版本号校验错误，跳过更新")
                 return False
 
             assets = release_info.get('assets', [])

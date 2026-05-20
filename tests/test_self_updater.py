@@ -62,6 +62,54 @@ class TestVersionToTuple(unittest.TestCase):
         self.assertEqual(SelfUpdater.version_to_tuple('invalid'), ())
         self.assertEqual(SelfUpdater.version_to_tuple('v'), ())
 
+    def test_prerelease_parsed_as_core(self):
+        """预发布版本提取核心三数字"""
+        self.assertEqual(SelfUpdater.version_to_tuple('v1.11.0-alpha'), (1, 11, 0))
+        self.assertEqual(SelfUpdater.version_to_tuple('v1.11.0-beta2'), (1, 11, 0))
+        self.assertEqual(SelfUpdater.version_to_tuple('v1.11.0-rc3'), (1, 11, 0))
+        self.assertEqual(SelfUpdater.version_to_tuple('v1.10.1-9-build.gb6da5ee'), (1, 10, 1))
+
+    def test_is_prerelease(self):
+        """预发布版本检测"""
+        su = SelfUpdater('', '', None)
+        self.assertTrue(su._is_prerelease('v1.11.0-alpha'))
+        self.assertTrue(su._is_prerelease('v1.11.0-beta2'))
+        self.assertTrue(su._is_prerelease('v1.11.0-rc'))
+        self.assertFalse(su._is_prerelease('v1.11.0'))
+        self.assertFalse(su._is_prerelease('v1.10.1-9-build.gb6da5ee'))
+
+    def test_version_newer_than_stable_upgrade(self):
+        """正式版之间的升级"""
+        su = SelfUpdater('', '', None)
+        self.assertTrue(su._version_newer_than('v1.10.0', 'v1.11.0'))
+        self.assertFalse(su._version_newer_than('v1.11.0', 'v1.10.0'))
+
+    def test_version_newer_than_prerelease_to_stable(self):
+        """预发布 → 正式版 视为升级"""
+        su = SelfUpdater('', '', None)
+        self.assertTrue(su._version_newer_than('v1.11.0-alpha', 'v1.11.0'))
+        self.assertTrue(su._version_newer_than('v1.11.0-beta', 'v1.11.0'))
+        self.assertTrue(su._version_newer_than('v1.11.0-rc', 'v1.11.0'))
+
+    def test_version_newer_than_alpha_to_beta(self):
+        """alpha → beta → rc 递进"""
+        su = SelfUpdater('', '', None)
+        self.assertTrue(su._version_newer_than('v1.11.0-alpha', 'v1.11.0-beta'))
+        self.assertTrue(su._version_newer_than('v1.11.0-beta', 'v1.11.0-rc'))
+        self.assertFalse(su._version_newer_than('v1.11.0-rc', 'v1.11.0-alpha'))
+
+    def test_version_newer_than_stable_to_prerelease(self):
+        """正式版 → 同数字版本的预发布 不视为升级"""
+        su = SelfUpdater('', '', None)
+        self.assertFalse(su._version_newer_than('v1.11.0', 'v1.11.0-rc'))
+        self.assertFalse(su._version_newer_than('v1.12.0', 'v1.12.0-beta'))
+
+    def test_version_newer_than_build_format(self):
+        """无标签构建格式比较"""
+        su = SelfUpdater('', '', None)
+        self.assertTrue(su._version_newer_than('v1.10.1-9-build.gb6da5ee', 'v1.11.0'))
+        self.assertFalse(su._version_newer_than('v1.11.0', 'v1.10.1-9-build.gb6da5ee'))
+
 
 class TestCheckSelfUpdate(unittest.TestCase):
     """check_self_update 测试"""
