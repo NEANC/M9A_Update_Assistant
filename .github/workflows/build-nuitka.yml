@@ -34,7 +34,7 @@ jobs:
       # 设置 Python 环境（仅当当前版本不是 3.12 时）
       - name: Setup Python
         if: steps.check_python.outputs.skip_setup != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           architecture: 'x64'
