@@ -457,13 +457,23 @@ release_version = release
             return False
 
     def _print_progress(self, prefix: str, progress: float, current_mb: float, total_mb: float) -> None:
-        """打印进度条到控制台"""
+        """打印进度条到控制台，内置 200ms 节流"""
+        now = time.monotonic()
+        if not hasattr(self, '_last_progress_time'):
+            self._last_progress_time = 0.0
+        if now - self._last_progress_time < 0.2 and progress < 100.0:
+            return
+        self._last_progress_time = now
         print(f"\r{prefix}: {progress:.1f}% ({current_mb:.2f} MB / {total_mb:.2f} MB)", end="", flush=True)
 
     @staticmethod
     def _clear_progress_line() -> None:
         """清除控制台当前行的进度条输出"""
         print("\r" + " " * 80 + "\r", end="", flush=True)
+
+    def _reset_progress_timer(self) -> None:
+        """重置进度节流计时器"""
+        self._last_progress_time = 0.0
 
     def extract_zip_with_progress(self, zip_path: str, extract_to: str) -> bool:
         """
@@ -506,6 +516,7 @@ release_version = release
                                          extracted_size / (1024 * 1024), total_size / (1024 * 1024))
 
                 self._clear_progress_line()
+                self._reset_progress_timer()
 
             self.logger.info(f"解压完成: {zip_path} -> {extract_to}")
             return True
@@ -835,7 +846,7 @@ release_version = release
                         self.logger.info(f"获取到文件大小: {total_size / (1024 * 1024):.2f} MB")
 
                     with open(save_path, 'wb') as f:
-                        chunk_size = 8192
+                        chunk_size = 1048576
                         for chunk in response.iter_content(chunk_size=chunk_size):
                             if chunk:
                                 f.write(chunk)
@@ -846,6 +857,7 @@ release_version = release
                                                          downloaded_size / (1024 * 1024), total_size / (1024 * 1024))
 
                     self._clear_progress_line()
+                    self._reset_progress_timer()
 
                     self.logger.info(f"下载完成，文件大小: {downloaded_size / (1024 * 1024):.2f} MB，保存路径: {save_path}")
                     return True
@@ -977,7 +989,7 @@ release_version = release
         if need_gui_download and gui_url:
             gui_filename = Path(gui_url).name
             gui_save_path = download_dir / gui_filename
-            gui_match = f"M9A-win-x86_64-{version_pattern}-{gui_keyword}.zip"
+            gui_match = f"M9A-win-x86_64-v{version_pattern}-{gui_keyword}.zip"
             gui_path = self._check_or_download_zip(gui_url, gui_save_path, release_info,
                                                     gui_filename, download_dir, gui_match)
             if not gui_path:
@@ -1139,6 +1151,7 @@ release_version = release
                                          extracted_size / (1024 * 1024), total_size / (1024 * 1024))
 
                 self._clear_progress_line()
+                self._reset_progress_timer()
 
             self.logger.info(f"deps 文件夹已提取到: {m9a_path}")
             return True
