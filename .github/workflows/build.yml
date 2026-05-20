@@ -2,7 +2,6 @@ name: 统一构建并发布
 
 on:
   push:
-    branches: [ main ]
     tags:
       - 'v*'  # 版本号标记
   pull_request:
@@ -25,7 +24,7 @@ jobs:
     steps:
       # 检查代码库
       - name: Check-out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0  # 确保能获取所有标签
 
@@ -34,11 +33,9 @@ jobs:
         id: set_tag
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            # For tag pushes, use the tag name
             tag="${{ github.ref_name }}"
           else
-            # For PRs and branch pushes, use git describe or fallback
-            tag=$(git describe --tags --match "v*" HEAD 2>/dev/null || echo "v0.0.1-$(git rev-parse --short HEAD)")
+            tag=$(git describe --tags --match "v*" HEAD 2>/dev/null | sed 's/-g/-build./' || echo "v0.0.1-build.$(git rev-parse --short HEAD)")
           fi
           echo "tag=${tag}" | tee -a $GITHUB_OUTPUT
 
@@ -67,22 +64,22 @@ jobs:
               git log --oneline "$previous_tag..HEAD" | grep -v "Merge pull request" > full_commits.txt
               # 计算提交数量
               total_commits=$(wc -l < full_commits.txt)
-              # 只取前15个提交
-              head -15 full_commits.txt > CHANGELOG.md
-              # 如果提交数量超过15个，添加Full Changelog链接
-              if [[ $total_commits -gt 15 ]]; then
+              # 只取前8个提交
+              head -8 full_commits.txt > CHANGELOG.md
+              # 如果提交数量超过8个，添加Full Changelog链接
+              if [[ $total_commits -gt 8 ]]; then
                 echo "" >> CHANGELOG.md
                 echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$previous_tag...${{ steps.set_tag.outputs.tag }}" >> CHANGELOG.md
               fi
             else
               echo "First release, no previous tag found"
-              # 首次发布，只取前15个提交
-              git log --oneline | grep -v "Merge pull request" | head -15 > CHANGELOG.md
+              # 首次发布，只取前8个提交
+              git log --oneline | grep -v "Merge pull request" | head -8 > CHANGELOG.md
             fi
           else
             echo "Generating changelog for development build"
-            # 开发构建，只取前15个提交
-            git log --oneline --since="1 week ago" | grep -v "Merge pull request" | head -15 > CHANGELOG.md
+            # 开发构建，只取前8个提交
+            git log --oneline --since="1 week ago" | grep -v "Merge pull request" | head -8 > CHANGELOG.md
           fi
           
           # Add header to changelog
@@ -97,7 +94,7 @@ jobs:
 
       # 上传变更日志
       - name: Upload Changelog
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: changelog
           path: CHANGELOG.md
@@ -111,7 +108,7 @@ jobs:
     steps:
       # 检出代码库
       - name: Check-out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # 写入版本号到源码
       - name: Update version
@@ -139,7 +136,7 @@ jobs:
       # 设置 Python 环境（仅当版本不是 3.12 时）
       - name: Setup Python
         if: steps.check_python.outputs.skip_setup != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           architecture: 'x64'
@@ -169,18 +166,18 @@ jobs:
           mode: onefile
           windows-console-mode: force
           assume-yes-for-downloads: true
-          follow-imports: true
+          include-plugin-directory: modules
           output-dir: build
           include-package: requests,socks
           no-deployment-flag: self-execution
           nofollow-import-to: '*.tests *.pytest *.unittest *.distutils *.setuptools *.pip *.tkinter *.email.mime *.http.server *.xmlrpc *.pydoc *.idlelib *.multiprocessing *.ctypes.test *.lib2to3 *.wsgiref *.ensurepip *.venv *.turtle *.turtledemo colorama.tests'
-          enable-plugin: upx
+          enable-plugins: upx
           onefile-no-compression: true
-          include-windows-runtime-dlls: 'no'
+          module-parameter: --include-windows-runtime-dlls=no
 
       # 上传 Nuitka 编译的可执行文件
       - name: Upload Nuitka artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: M9A_Update_Assistant-Nuitka-${{ needs.meta.outputs.tag }}
           path: build/M9A_Update_Assistant.exe
@@ -194,7 +191,7 @@ jobs:
     steps:
       # 检出代码库
       - name: Check-out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # 写入版本号到源码
       - name: Update version
@@ -222,7 +219,7 @@ jobs:
       # 设置 Python 环境（仅当版本不是 3.12 时）
       - name: Setup Python
         if: steps.check_python.outputs.skip_setup != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           architecture: 'x64'
@@ -251,7 +248,7 @@ jobs:
 
       # 上传 PyInstaller 打包的可执行文件
       - name: Upload PyInstaller artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: M9A_Update_Assistant-PyInstaller-${{ needs.meta.outputs.tag }}
           path: dist/M9A_Update_Assistant.exe
@@ -266,7 +263,7 @@ jobs:
     steps:
       # 下载所有构建产物
       - name: Download artifacts from GitHub
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: assets
 

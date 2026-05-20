@@ -117,6 +117,9 @@ ipython_config.py
 .pdm-python
 .pdm-build/
 
+# Test artifacts
+test-results.xml
+
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
 __pypackages__/
 
@@ -181,3 +184,4 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 /更新前存档
+/测试存档

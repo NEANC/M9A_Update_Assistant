@@ -13,7 +13,7 @@ jobs:
     steps:
       # 检查代码库
       - name: Check-out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # 检查当前 Python 版本
       - name: Check Python
@@ -34,7 +34,7 @@ jobs:
       # 设置 Python 环境（仅当当前版本不是 3.12 时）
       - name: Setup Python
         if: steps.check_python.outputs.skip_setup != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           architecture: 'x64'
@@ -56,7 +56,6 @@ jobs:
           mode: onefile
           windows-console-mode: force
           assume-yes-for-downloads: true
-          follow-imports: true
           output-dir: build
           include-package: requests,socks
           no-deployment-flag: self-execution
@@ -64,7 +63,7 @@ jobs:
 
       # 上传编译后的可执行文件
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: M9A_Update_Assistant-Nuitka-${{ github.ref_name }}
           path: build/M9A_Update_Assistant.exe

@@ -7,3 +7,6 @@ requests>=2.32.3
 
 # 用于支持 SOCKS 代理
 PySocks>=1.7.1
+
+# 用于单元测试
+pytest>=8.0
