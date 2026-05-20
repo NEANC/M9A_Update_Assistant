@@ -51,9 +51,7 @@ class SelfUpdater:
         if is_pyinstaller:
             package_type = "PyInstaller"
 
-        logging.getLogger("M9AUpdateAssistant").debug(
-            f"源码运行: {is_py_script}, 是否构建: {is_bundled}, 运行模式: {package_type}"
-        )
+        logging.getLogger("M9AUpdateAssistant").debug(f"当前运行模式: {package_type}")
         return is_bundled, package_type
 
     @staticmethod
