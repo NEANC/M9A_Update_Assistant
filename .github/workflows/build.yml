@@ -24,7 +24,7 @@ jobs:
     steps:
       # 检查代码库
       - name: Check-out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0  # 确保能获取所有标签
 
@@ -94,7 +94,7 @@ jobs:
 
       # 上传变更日志
       - name: Upload Changelog
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: changelog
           path: CHANGELOG.md
@@ -108,7 +108,7 @@ jobs:
     steps:
       # 检出代码库
       - name: Check-out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # 写入版本号到源码
       - name: Update version
@@ -177,7 +177,7 @@ jobs:
 
       # 上传 Nuitka 编译的可执行文件
       - name: Upload Nuitka artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: M9A_Update_Assistant-Nuitka-${{ needs.meta.outputs.tag }}
           path: build/M9A_Update_Assistant.exe
@@ -191,7 +191,7 @@ jobs:
     steps:
       # 检出代码库
       - name: Check-out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # 写入版本号到源码
       - name: Update version
@@ -248,7 +248,7 @@ jobs:
 
       # 上传 PyInstaller 打包的可执行文件
       - name: Upload PyInstaller artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: M9A_Update_Assistant-PyInstaller-${{ needs.meta.outputs.tag }}
           path: dist/M9A_Update_Assistant.exe
@@ -263,7 +263,7 @@ jobs:
     steps:
       # 下载所有构建产物
       - name: Download artifacts from GitHub
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: assets
 
