@@ -98,7 +98,7 @@ jobs:
         with:
           name: changelog
           path: CHANGELOG.md
-          retention-days: 7
+          retention-minutes: 30
 
   # Nuitka 构建
   build-nuitka:
@@ -181,7 +181,7 @@ jobs:
         with:
           name: M9A_Update_Assistant-Nuitka-${{ needs.meta.outputs.tag }}
           path: build/M9A_Update_Assistant.exe
-          retention-days: 7
+          retention-days: 1
 
   # PyInstaller 构建
   build-pyinstaller:
@@ -252,7 +252,7 @@ jobs:
         with:
           name: M9A_Update_Assistant-PyInstaller-${{ needs.meta.outputs.tag }}
           path: dist/M9A_Update_Assistant.exe
-          retention-days: 7
+          retention-days: 1
 
   # 发布步骤
   release:
