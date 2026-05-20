@@ -35,7 +35,6 @@ class ConfigManager:
         self.github_repo = 'MAA1999/M9A'
         self.github_release_version = 'release'
         self.github_proxy = ''
-        self.github_full_download_enabled = True
 
     def _generate_default_config(self) -> None:
         """生成默认配置文件"""
@@ -50,8 +49,8 @@ temp_folder = Z:\Temp\M9A-Update-Assistant
 archive_folder_name = 存档文件夹
 
 [Logs]
-# 是否保存日志文件
-save_enabled = false
+# 是否保存日志文件，如遇 BUG 时请打开此选项，以获取更多调试信息
+save_enabled = False
 
 # 最大日志文件数量（超过此数量的旧日志将被删除）
 max_files = 15
@@ -60,17 +59,12 @@ max_files = 15
 # GitHub 仓库地址（格式：用户名/仓库名）
 repo = MAA1999/M9A
 
-# 是否下载 Full 版本（用于提取 deps 文件夹）
-# 如果 Lite 版本已包含 deps，则无需下载 Full 版本
-full_download_enabled = true
-
-# 代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080）
-# 留空表示不使用代理
+# 代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080），留空表示不使用代理
 proxy =
 
-# Release 版本选择
-# release: 使用最新正式版（https://github.com/MAA1999/M9A/releases）
-# latest: 使用带有 latest 标签的版本（https://github.com/MAA1999/M9A/releases/latest）
+# 版本选择
+# release: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本（https://github.com/MAA1999/M9A/releases）
+# latest: 使用带有 latest 标签的正式版本（https://github.com/MAA1999/M9A/releases/latest）
 release_version = release
 """
         try:
@@ -158,7 +152,6 @@ release_version = release
         self.github_repo = self.config.get('GitHub', 'repo', fallback='MAA1999/M9A')
         self.github_release_version = self.config.get('GitHub', 'release_version', fallback='release')
         self.github_proxy = self.config.get('GitHub', 'proxy', fallback='').strip()
-        self.github_full_download_enabled = self.config.getboolean('GitHub', 'full_download_enabled', fallback=True)
 
         if self.github_proxy:
             self.logger.info(f"已配置代理: {self.github_proxy}")

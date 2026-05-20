@@ -274,9 +274,6 @@ class M9AUpdateAssistant:
         if cli_has_deps:
             need_gui_download = False
             self.logger.info("CLI ZIP 已包含 deps 文件夹，跳过 GUI ZIP 下载")
-        elif not self.config.github_full_download_enabled:
-            need_gui_download = False
-            self.logger.info("配置中禁用了 GUI 版本下载，跳过 GUI ZIP 下载")
 
         if need_gui_download and gui_url:
             gui_filename = Path(gui_url).name
@@ -398,7 +395,7 @@ class M9AUpdateAssistant:
 
             config_backup_successful = self._updater.backup_config(m9a_folder, version)
             if not config_backup_successful:
-                self.logger.info("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
+                self.logger.warning("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
 
             if not self._updater.clean_m9a_folder(m9a_folder):
                 self.logger.critical(f"清理 M9A 文件夹失败: {m9a_folder}")
