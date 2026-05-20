@@ -898,9 +898,12 @@ release_version = release
 
         return str(save_path)
 
-    def download_latest_release(self) -> Optional[Dict[str, Any]]:
+    def download_latest_release(self, release_info: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
         下载最新版本的 CLI 和 GUI ZIP 文件
+
+        Args:
+            release_info: 可选，已获取的 GitHub release 信息。若为 None 则内部调用 API。
 
         Returns:
             包含下载信息的字典，包含：
@@ -910,7 +913,8 @@ release_version = release
             - version: 版本号（如 v3.19.0）
             如果下载失败则返回 None
         """
-        release_info = self.get_latest_release_info()
+        if release_info is None:
+            release_info = self.get_latest_release_info()
         if not release_info:
             return None
 
@@ -1384,9 +1388,7 @@ release_version = release
         gui_zip = None
         version = ''
 
-        # 尝试从 GitHub 下载最新版本
-        self.logger.info("正在从 GitHub 获取最新版本...")
-        download_result = self.download_latest_release()
+        download_result = self.download_latest_release(release_info)
         if download_result:
             downloaded_files = download_result['files']
             cli_keyword = download_result['cli_keyword']
