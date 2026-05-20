@@ -110,6 +110,15 @@ class TestVersionToTuple(unittest.TestCase):
         self.assertTrue(su._version_newer_than('v1.10.1-9-build.gb6da5ee', 'v1.11.0'))
         self.assertFalse(su._version_newer_than('v1.11.0', 'v1.10.1-9-build.gb6da5ee'))
 
+    def test_is_build_tag(self):
+        """构建标签检测"""
+        self.assertTrue(SelfUpdater._is_build_tag('v0.0.1-build.gb6da5ee'))
+        self.assertTrue(SelfUpdater._is_build_tag('v1.10.1-9-build.gb6da5ee'))
+        self.assertFalse(SelfUpdater._is_build_tag('v1.10.0'))
+        self.assertFalse(SelfUpdater._is_build_tag('v1.11.0-alpha'))
+        self.assertFalse(SelfUpdater._is_build_tag('v1.11.0-beta'))
+        self.assertFalse(SelfUpdater._is_build_tag('v1.11.0-rc'))
+
 
 class TestCheckSelfUpdate(unittest.TestCase):
     """check_self_update 测试"""
@@ -131,6 +140,31 @@ class TestCheckSelfUpdate(unittest.TestCase):
 
         result = self.su.check_self_update('v1.0.0', gh, dm, zm)
         # 源码运行下始终跳过
+        self.assertFalse(result)
+
+    @mock.patch('modules.self_updater.requests.get')
+    @mock.patch('modules.self_updater.SelfUpdater.detect_package_type')
+    def test_build_tag_skips(self, mock_detect, mock_get):
+        """构建标签版本检测到新版本但仍跳过更新"""
+        mock_detect.return_value = (True, 'Nuitka')
+
+        mock_response = mock.MagicMock()
+        mock_response.json.return_value = {
+            'tag_name': 'v1.0.0',
+            'assets': [],
+        }
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        from modules.github_release_client import GitHubReleaseClient
+        from modules.download_manager import DownloadManager
+        from modules.zip_manager import ZipManager
+
+        gh = GitHubReleaseClient('test/repo', 'latest', '', self.logger)
+        dm = DownloadManager('', '/tmp', self.logger)
+        zm = ZipManager(self.logger)
+
+        result = self.su.check_self_update('v0.0.1-build.gb6da5ee', gh, dm, zm)
         self.assertFalse(result)
 
     @mock.patch('modules.self_updater.requests.get')

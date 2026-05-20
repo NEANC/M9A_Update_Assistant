@@ -109,6 +109,11 @@ class SelfUpdater:
         kind = match.group(1)
         return {'alpha': 1, 'beta': 2, 'rc': 3}.get(kind, 0)
 
+    @staticmethod
+    def _is_build_tag(v: str) -> bool:
+        """检查版本号是否为无标签构建格式（如 v0.0.1-build.gXXXXXX）"""
+        return bool(re.search(r'\d-build\.g[a-f0-9]{7}', v))
+
     def check_self_update(self, current_version: str, gh_client: GitHubReleaseClient,
                            download_manager: DownloadManager,
                            zip_manager: ZipManager) -> bool:
@@ -140,6 +145,9 @@ class SelfUpdater:
             latest_version = release_info.get('tag_name', '')
             if self._version_newer_than(current_version, latest_version):
                 self.logger.info(f"检测到新版本: {latest_version}")
+                if self._is_build_tag(current_version):
+                    self.logger.info("当前为 build 版本，跳过更新")
+                    return False
             else:
                 cur_tuple = self.version_to_tuple(current_version)
                 lat_tuple = self.version_to_tuple(latest_version)
