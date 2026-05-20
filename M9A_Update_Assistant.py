@@ -12,6 +12,7 @@ import zipfile
 import hashlib
 import colorama
 import requests
+import subprocess
 import configparser
 
 from datetime import datetime
@@ -1208,17 +1209,91 @@ release_version = release
         except Exception:
             return ()
 
-    def check_self_update(self) -> bool:
+    def _get_exe_sha256_from_body(self, release_info: Dict, exe_name: str) -> Optional[str]:
         """
-        检查并更新自身
+        从 release body 中提取指定 EXE 文件的 SHA256 哈希值
 
-        从 GitHub 获取最新版本的 M9A Update Assistant，下载对应版本的 exe 文件，并覆盖更新本地文件。
+        Args:
+            release_info: GitHub release 信息
+            exe_name: EXE 文件名
 
         Returns:
-            bool: 操作是否成功
+            SHA256 哈希值，未找到则返回 None
+        """
+        body = release_info.get('body', '')
+        for line in body.split('\n'):
+            if exe_name in line and 'sha256' in line.lower():
+                match = re.search(r'[0-9a-f]{64}', line.lower())
+                if match:
+                    return match.group(0)
+        return None
+
+    def _verify_exe_sha256(self, file_path: str, release_info: Dict, exe_name: str) -> bool:
+        """
+        校验 EXE 文件的 SHA256 哈希值
+
+        Args:
+            file_path: 文件路径
+            release_info: release 信息
+            exe_name: EXE 文件名
+
+        Returns:
+            校验是否通过
+        """
+        expected = self._get_exe_sha256_from_body(release_info, exe_name)
+        if not expected:
+            self.logger.info("release body 中未找到 SHA256 校验值，跳过校验")
+            return True
+        actual = self._calculate_sha256(file_path)
+        if actual != expected:
+            self.logger.error("SHA256 校验失败:")
+            self.logger.warning(f"GitHub: {expected}")
+            self.logger.warning(f"本地:   {actual}")
+            return False
+        self.logger.info("SHA256 校验成功")
+        self.logger.info(f"GitHub: {expected}")
+        self.logger.info(f"本地:   {actual}")
+        return True
+
+    def _generate_self_update_script(self) -> str:
+        """
+        生成自更新 CMD 脚本，用于在程序退出后替换自身
+
+        Returns:
+            生成的 .bat 脚本路径
+        """
+        current_exe = sys.executable
+        temp_dir = Path(self.temp_folder)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        script_path = temp_dir / "self_update.bat"
+
+        script_content = (
+            f'@echo off\r\n'
+            f'echo 等待主进程退出...\r\n'
+            f':waitloop\r\n'
+            f'timeout /t 1 /nobreak >nul\r\n'
+            f'tasklist /FI "PID eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul\r\n'
+            f'if not errorlevel 1 goto waitloop\r\n'
+            f'echo 正在启动自更新...\r\n'
+            f'start "" /wait "{current_exe}" --self-update\r\n'
+            f'del "%~f0"\r\n'
+        )
+        script_path.write_text(script_content, encoding='gbk')
+        self.logger.debug(f"自更新脚本已生成: {script_path}")
+        return str(script_path)
+
+    def check_self_update(self) -> bool:
+        """
+        检查并准备自身更新
+
+        下载新版本 exe 并校验后，安排退出后自动替换。
+        实际替换由 --self-update 模式完成。
+
+        Returns:
+            bool: 是否需要退出以完成更新
         """
         print(f"\n")
-        self.logger.info(f"开始检查程序版本更新...")
+        self.logger.info("开始检查程序版本更新...")
 
         is_bundled, package_type = self._detect_package_type()
         if not is_bundled:
@@ -1276,42 +1351,100 @@ release_version = release
                 self.logger.warning("未找到带有 Nuitka 或 PyInstaller 标签的 exe 文件")
                 return False
 
-            temp_exe_path = Path(self.temp_folder) / f"M9A_Update_Assistant_{latest_version}.exe"
-            temp_exe_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_dir = Path(self.temp_folder)
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            tmp_path = temp_dir / "M9A_Update_Assistant_new.exe.tmp"
 
             self.logger.info(f"开始下载: {exe_url}")
-            if not self.download_file_with_progress(exe_url, str(temp_exe_path)):
+            if not self.download_file_with_progress(exe_url, str(tmp_path)):
                 self.logger.error("下载失败")
                 return False
 
-            current_exe = Path(sys.executable)
-            self.logger.info(f"当前可执行文件: {current_exe}")
+            if not self._verify_exe_sha256(str(tmp_path), release_info, exe_name):
+                self.logger.error("新版本校验失败，放弃更新")
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+                return False
 
-            backup_exe = current_exe.with_suffix('.exe.bak')
-            if backup_exe.exists():
-                backup_exe.unlink()
-            current_exe.rename(backup_exe)
-            self.logger.info(f"已备份当前文件到: {backup_exe}")
+            self.logger.info("新版本已下载并校验通过")
+            script = self._generate_self_update_script()
+            self.logger.info("程序将在退出后自动替换")
 
-            shutil.copy2(temp_exe_path, current_exe)
-            self.logger.info(f"已更新文件: {current_exe}")
-
-            temp_exe_path.unlink()
-
-            if backup_exe.exists():
-                backup_exe.unlink()
-                self.logger.info(f"已删除备份文件: {backup_exe}")
-
-            self.logger.info("M9A Update Assistant 更新完成")
+            subprocess.Popen(
+                ['cmd', '/c', script],
+                creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS,
+                close_fds=True,
+            )
             return True
 
         except requests.RequestException as e:
             self.logger.error(f"获取 GitHub release 信息失败: {e}")
             return False
         except Exception as e:
-            self.logger.error(f"M9A Update Assistant 更新失败: {e}")
-            self._rollback_self_update()
+            self.logger.error(f"检查自身更新时出错: {e}")
             return False
+
+    def _self_update_perform(self) -> None:
+        """
+        执行自身更新替换
+
+        1. 校验 new.exe.tmp 在自更新模式下仍然有效
+        2. 将当前 exe 重命名为 .bak
+        3. 将 new.exe.tmp 移动为当前 exe
+        4. 启动新 exe --self-update-complete
+        """
+        tmp_path = Path(self.temp_folder) / "M9A_Update_Assistant_new.exe.tmp"
+        current_exe = Path(sys.executable)
+        backup_exe = current_exe.with_suffix('.exe.bak')
+
+        if not tmp_path.exists():
+            self.logger.critical(f"更新文件不存在: {tmp_path}")
+            sys.exit(1)
+
+        self.logger.info(f"开始替换: {current_exe}")
+
+        try:
+            if backup_exe.exists():
+                backup_exe.unlink()
+            current_exe.rename(backup_exe)
+            self.logger.info(f"已备份: {backup_exe}")
+
+            tmp_path.rename(current_exe)
+            self.logger.info(f"已替换: {current_exe}")
+
+            self.logger.info("启动新版本完成更新...")
+            subprocess.Popen(
+                [str(current_exe), '--self-update-complete'],
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+                close_fds=True,
+            )
+        except Exception as e:
+            self.logger.critical(f"替换失败: {e}")
+            if backup_exe.exists() and not current_exe.exists():
+                backup_exe.rename(current_exe)
+                self.logger.info("已回滚")
+            sys.exit(1)
+
+    def _self_update_complete(self) -> None:
+        """自更新完成后的清理步骤"""
+        print_info()
+        self.logger.info("自更新完成，正在验证...")
+
+        if not self.validate_config():
+            self.logger.critical("配置验证失败!")
+            self._rollback_self_update()
+            sys.exit(1)
+
+        bak_path = Path(sys.executable).with_suffix('.exe.bak')
+        if bak_path.exists():
+            bak_path.unlink()
+            self.logger.info(f"已删除备份文件: {bak_path}")
+
+        self._cleanup_old_logs()
+        self.logger.info("自更新验证通过，程序已就绪")
+        print(f"\n")
 
     def _rollback_self_update(self) -> None:
         """尝试回滚自身更新"""
@@ -1492,21 +1625,31 @@ release_version = release
 
 def main():
     """主函数"""
+    if '--self-update-complete' in sys.argv:
+        assistant = M9AUpdateAssistant()
+        assistant._self_update_complete()
+        return
+
+    if '--self-update' in sys.argv:
+        assistant = M9AUpdateAssistant()
+        assistant._self_update_perform()
+        return
+
     try:
         print_info()
         assistant = M9AUpdateAssistant()
-        
-        # 验证配置
+
         if not assistant.validate_config():
             assistant.logger.critical("错误的配置，请修改配置文件后重新运行。")
             sys.exit(1)
-        
-        # 执行 M9A 更新
+
         success = assistant.run_update()
-        
-        # 检查自身更新
-        assistant.check_self_update()
-        
+
+        need_exit = assistant.check_self_update()
+        if need_exit:
+            print(f"\n程序将自动退出以完成自更新，稍后自动重启...\n")
+            sys.exit(0)
+
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:
         logger = logging.getLogger("M9AUpdateAssistant")
