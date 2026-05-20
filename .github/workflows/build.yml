@@ -170,6 +170,7 @@ jobs:
           windows-console-mode: force
           assume-yes-for-downloads: true
           follow-imports: true
+          include-plugin-directory: modules
           output-dir: build
           include-package: requests,socks
           no-deployment-flag: self-execution
