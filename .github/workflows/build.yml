@@ -166,15 +166,14 @@ jobs:
           mode: onefile
           windows-console-mode: force
           assume-yes-for-downloads: true
-          follow-imports: true
           include-plugin-directory: modules
           output-dir: build
           include-package: requests,socks
           no-deployment-flag: self-execution
           nofollow-import-to: '*.tests *.pytest *.unittest *.distutils *.setuptools *.pip *.tkinter *.email.mime *.http.server *.xmlrpc *.pydoc *.idlelib *.multiprocessing *.ctypes.test *.lib2to3 *.wsgiref *.ensurepip *.venv *.turtle *.turtledemo colorama.tests'
-          enable-plugin: upx
+          enable-plugins: upx
           onefile-no-compression: true
-          include-windows-runtime-dlls: 'no'
+          module-parameter: --include-windows-runtime-dlls=no
 
       # 上传 Nuitka 编译的可执行文件
       - name: Upload Nuitka artifact

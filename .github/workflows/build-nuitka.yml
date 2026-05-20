@@ -56,7 +56,6 @@ jobs:
           mode: onefile
           windows-console-mode: force
           assume-yes-for-downloads: true
-          follow-imports: true
           output-dir: build
           include-package: requests,socks
           no-deployment-flag: self-execution
