@@ -213,7 +213,7 @@ class M9AUpdateAssistant:
 
         return outdated
 
-    def _download_latest_release(self, release_info: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    def _download_latest_release(self, release_info: Optional[Dict[str, Any]] = None,
                                   cached_cli: str = '') -> Optional[Dict[str, Any]]:
         """
         下载最新版本的 CLI 和 GUI ZIP 文件
@@ -256,7 +256,15 @@ class M9AUpdateAssistant:
 
         downloaded_files = []
 
-        if cli_url:
+        if cached_cli:
+            self.logger.info(f"使用本地缓存 CLI ZIP: {cached_cli}")
+            if not self._zip.verify_zip_integrity(cached_cli, release_info, Path(cached_cli).name, self._github):
+                self.logger.warning("缓存 CLI ZIP 校验失败，将重新下载")
+                cached_cli = ''
+
+        if cached_cli:
+            cli_path = cached_cli
+        elif cli_url:
             cli_filename = Path(cli_url).name
             cli_save_path = download_dir / cli_filename
             cli_path = self._check_or_download_zip(
@@ -264,14 +272,14 @@ class M9AUpdateAssistant:
             )
             if not cli_path:
                 return None
-            downloaded_files.append(cli_path)
         else:
             self.logger.warning(f"未找到匹配的 CLI ZIP 文件: {cli_zip_pattern}")
             return None
 
+        downloaded_files.append(cli_path)
+
         need_gui_download = True
-        cli_zip_path = downloaded_files[0]
-        cli_has_deps = self._zip.check_lite_zip_has_deps(cli_zip_path)
+        cli_has_deps = self._zip.check_lite_zip_has_deps(cli_path)
         if cli_has_deps:
             need_gui_download = False
             self.logger.info("CLI ZIP 已包含 deps 文件夹，跳过 GUI ZIP 下载")
@@ -362,14 +370,21 @@ class M9AUpdateAssistant:
 
         self.logger.info(f"共有 {len(outdated_folders)} 个 M9A 需要更新")
 
+        keywords = self._github.parse_release_keywords(release_info)
+        cli_keyword = keywords['cli']
+        self.config.cli_zip_pattern = f'M9A-win-x86_64-v*-{cli_keyword}.zip'
+
         cli_zip = self._updater.find_lite_zip(
             self.config.cli_zip_pattern, self.config.temp_folder, self._github, latest_version,
         )
+        if cli_zip:
+            self.logger.info(f"本地已缓存 CLI ZIP: {cli_zip}")
+
         gui_zip = None
         version = ''
         cli_has_deps = None
 
-        download_result = self._download_latest_release(release_info)
+        download_result = self._download_latest_release(release_info, cached_cli=cli_zip)
         if download_result:
             downloaded_files = download_result['files']
             cli_keyword = download_result['cli_keyword']
@@ -383,10 +398,8 @@ class M9AUpdateAssistant:
                 elif gui_keyword in file_path:
                     gui_zip = file_path
         elif cli_zip:
-            self.logger.warning("从 GitHub 下载失败，使用本地已有文件")
-            if not self._zip.verify_zip_integrity(cli_zip, release_info, Path(cli_zip).name, self._github):
-                self.logger.critical("本地缓存文件校验失败，更新终止")
-                return False
+            self.logger.warning("从 GitHub 下载失败，使用本地缓存文件")
+            cli_has_deps = self._zip.check_lite_zip_has_deps(cli_zip)
         else:
             info = self._updater.find_lite_zip(
                 self.config.cli_zip_pattern, self.config.temp_folder, self._github,
@@ -396,6 +409,7 @@ class M9AUpdateAssistant:
                     self.logger.critical("本地缓存文件校验失败，更新终止")
                     return False
                 cli_zip = info
+                cli_has_deps = self._zip.check_lite_zip_has_deps(cli_zip)
             else:
                 self.logger.critical("未找到 CLI ZIP 文件，更新终止")
                 return False
