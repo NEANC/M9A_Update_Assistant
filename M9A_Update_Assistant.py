@@ -428,7 +428,6 @@ class M9AUpdateAssistant:
 
         all_success = True
         for index, m9a_folder in enumerate(outdated_folders, 1):
-            print(f"\n")
             self.logger.info(f"开始更新第 {index}/{len(outdated_folders)} 个 M9A: {m9a_folder}")
 
             config_backup_successful = self._updater.backup_config(m9a_folder, version)
