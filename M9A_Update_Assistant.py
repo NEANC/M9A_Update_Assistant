@@ -214,6 +214,7 @@ class M9AUpdateAssistant:
         return outdated
 
     def _download_latest_release(self, release_info: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+                                  cached_cli: str = '') -> Optional[Dict[str, Any]]:
         """
         下载最新版本的 CLI 和 GUI ZIP 文件
 
@@ -300,9 +301,14 @@ class M9AUpdateAssistant:
                                 tag_name: str) -> Optional[str]:
         """
         检查缓存或下载 ZIP 文件，并进行完整性校验
-        缓存匹配优先使用 ZIP 内部 interface.json 的版本号
+        缓存匹配优先使用 ZIP 内部 interface.json 的版本号 + 文件名关键字
         """
+        zip_keyword = Path(zip_filename).name.replace('.zip', '').split('-')[-1]
+
         for candidate in download_dir.glob('M9A-win-x86_64-v*-*.zip'):
+            candidate_keyword = candidate.name.replace('.zip', '').split('-')[-1]
+            if candidate_keyword != zip_keyword:
+                continue
             cached_version = ZipManager.get_zip_version(str(candidate))
             if cached_version and cached_version == tag_name:
                 self.logger.info(f"临时文件夹存在缓存文件 {cached_version}: {candidate}")
@@ -310,7 +316,7 @@ class M9AUpdateAssistant:
                     return str(candidate)
                 self.logger.warning("缓存文件校验失败，将重新下载")
             elif cached_version:
-                self.logger.debug(f"缓存版本 {cached_version} 与目标 {tag_name} 不匹配: {candidate}")
+                self.logger.debug(f"缓存 ZIP 内部版本 {cached_version} 与目标 {tag_name} 不匹配: {candidate}")
 
         max_attempts = 3
         for attempt in range(max_attempts):
