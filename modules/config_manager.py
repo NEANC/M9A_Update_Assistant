@@ -35,6 +35,7 @@ class ConfigManager:
         self.github_repo = 'MAA1999/M9A'
         self.github_release_version = 'release'
         self.github_proxy = ''
+        self.self_update_enabled = True
 
     def _generate_default_config(self) -> None:
         """生成默认配置文件"""
@@ -66,6 +67,10 @@ proxy =
 # release: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本（https://github.com/MAA1999/M9A/releases）
 # latest: 使用带有 latest 标签的正式版本（https://github.com/MAA1999/M9A/releases/latest）
 release_version = release
+
+[SelfUpdate]
+# 是否启用程序自我更新
+enabled = true
 """
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
@@ -152,6 +157,7 @@ release_version = release
         self.github_repo = self.config.get('GitHub', 'repo', fallback='MAA1999/M9A')
         self.github_release_version = self.config.get('GitHub', 'release_version', fallback='release')
         self.github_proxy = self.config.get('GitHub', 'proxy', fallback='').strip()
+        self.self_update_enabled = self.config.getboolean('SelfUpdate', 'enabled', fallback=True)
 
         if self.github_proxy:
             self.logger.info(f"已配置代理: {self.github_proxy}")

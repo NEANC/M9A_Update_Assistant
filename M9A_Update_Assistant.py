@@ -481,6 +481,9 @@ class M9AUpdateAssistant:
 
     def check_self_update(self) -> bool:
         """检查自身更新"""
+        if not self.config.self_update_enabled:
+            self.logger.info("已禁用自我更新")
+            return False
         return self._self_update.check_self_update(
             VERSION, self._github, self._download, self._zip,
         )
@@ -517,6 +520,18 @@ def main():
         assistant = M9AUpdateAssistant()
         assistant.self_update_perform()
         return
+
+    if any(flag in sys.argv for flag in ('-U', '--update', '--Update')):
+        print_info()
+        assistant = M9AUpdateAssistant()
+        if assistant.check_self_update():
+            assistant.logger.info("已将新版本下载到临时文件夹，程序即将退出以完成更新...")
+            sys.exit(0)
+        else:
+            assistant.logger.info("当前已是最新版本")
+            print(f"\n当前已是最新版本，无需更新。按任意键退出...")
+            input()
+            return
 
     try:
         print_info()
