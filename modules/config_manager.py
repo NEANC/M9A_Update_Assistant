@@ -11,7 +11,54 @@ from typing import List
 
 
 class ConfigManager:
-    """配置管理器，负责配置文件读取、校验、默认配置生成"""
+    """配置管理器，负责配置初始化、加载、验证"""
+
+    DEFAULT_SECTIONS = {
+        'Paths': {
+            'm9a_folders': r'Z:\M9A',
+            'temp_folder': r'Z:\Temp\M9A-Update-Assistant',
+            'archive_folder_name': '存档文件夹',
+        },
+        'Logs': {
+            'save_enabled': 'false',
+            'max_files': '15',
+        },
+        'GitHub': {
+            'repo': 'MAA1999/M9A',
+            'proxy': '',
+            'release_version': 'release',
+        },
+        'SelfUpdate': {
+            'enabled': 'true',
+        },
+    }
+
+    _COMMENTS = {
+        'Paths.m9a_folders': 'M9A 文件夹路径（多个路径用逗号分隔）',
+        'Paths.temp_folder': '临时文件夹路径',
+        'Paths.archive_folder_name': '配置存档文件夹名（用于保存更新前的配置）',
+        'Logs.save_enabled': '是否保存日志文件，如遇 BUG 时请打开此选项，以获取更多调试信息',
+        'Logs.max_files': '最大日志文件数量（超过此数量的旧日志将被删除）',
+        'GitHub.repo': 'GitHub 仓库地址（格式：用户名/仓库名）',
+        'GitHub.proxy': '代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080），留空表示不使用代理',
+        'GitHub.release_version': '版本选择\nrelease: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本\nlatest: 使用带有 latest 标签的正式版本',
+        'SelfUpdate.enabled': '是否启用程序自我更新',
+    }
+
+    @classmethod
+    def _build_default_config(cls) -> str:
+        """从 DEFAULT_SECTIONS + _COMMENTS 生成默认配置文件内容"""
+        lines = []
+        for section, keys in cls.DEFAULT_SECTIONS.items():
+            lines.append(f'[{section}]')
+            for key, val in keys.items():
+                comment = cls._COMMENTS.get(f'{section}.{key}', '')
+                if comment:
+                    for cl in comment.split('\n'):
+                        lines.append(f'# {cl}')
+                lines.append(f'{key} = {val}')
+            lines.append('')
+        return '\n'.join(lines)
 
     def __init__(self, config_file: str, logger: logging.Logger):
         """
@@ -23,15 +70,15 @@ class ConfigManager:
         """
         self.config_file = config_file
         self.logger = logger
-        self.config = configparser.ConfigParser()
+        self.config = configparser.ConfigParser(strict=False)
 
         self.m9a_folders: List[str] = []
         self.temp_folder = ''
-        self.archive_folder_name = '更新前存档'
+        self.archive_folder_name = '存档文件夹'
         self.cli_zip_pattern = 'M9A-win-x86_64-v*-Lite.zip'
         self.gui_zip_pattern = 'M9A-win-x86_64-v*-Full.zip'
         self.log_max_files = 15
-        self.log_save_enabled = True
+        self.log_save_enabled = False
         self.github_repo = 'MAA1999/M9A'
         self.github_release_version = 'release'
         self.github_proxy = ''
@@ -39,39 +86,7 @@ class ConfigManager:
 
     def _generate_default_config(self) -> None:
         """生成默认配置文件"""
-        default_config = r"""[Paths]
-# M9A 文件夹路径（多个路径用逗号分隔）
-m9a_folders = Z:\M9A
-
-# 临时文件夹路径
-temp_folder = Z:\Temp\M9A-Update-Assistant
-
-# 配置存档文件夹名（用于保存更新前的配置）
-archive_folder_name = 存档文件夹
-
-[Logs]
-# 是否保存日志文件，如遇 BUG 时请打开此选项，以获取更多调试信息
-save_enabled = False
-
-# 最大日志文件数量（超过此数量的旧日志将被删除）
-max_files = 15
-
-[GitHub]
-# GitHub 仓库地址（格式：用户名/仓库名）
-repo = MAA1999/M9A
-
-# 代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080），留空表示不使用代理
-proxy =
-
-# 版本选择
-# release: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本（https://github.com/MAA1999/M9A/releases）
-# latest: 使用带有 latest 标签的正式版本（https://github.com/MAA1999/M9A/releases/latest）
-release_version = release
-
-[SelfUpdate]
-# 是否启用程序自我更新
-enabled = true
-"""
+        default_config = self._build_default_config()
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 f.write(default_config)
@@ -81,6 +96,128 @@ enabled = true
         except IOError as e:
             print(f"生成配置文件失败: {e}")
             sys.exit(1)
+
+    def _regenerate_config_file(self) -> None:
+        """
+        重建配置文件，保留所有已有值，仅补充缺失的模板键。
+        遍历 self.config 中所有节和键，跳过 DEFAULT（无节头孤儿键）。
+        """
+        lines = []
+        for section in self.config.sections():
+            if section.upper() == 'DEFAULT':
+                continue
+            lines.append(f'[{section}]')
+            template = self.DEFAULT_SECTIONS.get(section, {})
+            written_keys = set()
+
+            for key, default_val in template.items():
+                written_keys.add(key)
+                comment = self._COMMENTS.get(f'{section}.{key}', '')
+                if comment:
+                    for cl in comment.split('\n'):
+                        lines.append(f'# {cl}')
+                current = self.config.get(section, key, fallback=default_val)
+                lines.append(f'{key} = {current}')
+
+            for key, val in self.config.items(section):
+                if key not in written_keys and key not in (self.config.defaults() or {}):
+                    if not key.strip():
+                        continue
+                    lines.append(f'{key} = {val}')
+
+            lines.append('')
+
+        for section, keys in self.DEFAULT_SECTIONS.items():
+            if not self.config.has_section(section):
+                lines.append(f'[{section}]')
+                for key, val in keys.items():
+                    comment = self._COMMENTS.get(f'{section}.{key}', '')
+                    if comment:
+                        for cl in comment.split('\n'):
+                            lines.append(f'# {cl}')
+                    lines.append(f'{key} = {val}')
+                lines.append('')
+
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(lines))
+        except OSError as e:
+            self.logger.error(f"写入配置文件失败: {e}")
+
+    def _sanitize_config_file(self) -> None:
+        """逐行清理损坏行：空键值行删除，无 = 行注释掉"""
+        import re
+        try:
+            with open(self.config_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except OSError:
+            return
+
+        fixed = False
+        new_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#') or stripped.startswith(';'):
+                new_lines.append(line)
+                continue
+            if re.match(r'^\[.+\]$', stripped):
+                new_lines.append(line)
+                continue
+            if '=' not in stripped:
+                new_lines.append(f'# [已修复] {line}')
+                fixed = True
+                continue
+            key, sep, val = stripped.partition('=')
+            if not key.strip():
+                fixed = True
+                continue
+            new_lines.append(line)
+
+        if fixed:
+            try:
+                with open(self.config_file, 'w', encoding='utf-8') as f:
+                    f.writelines(new_lines)
+            except OSError as e:
+                self.logger.error(f"修复配置文件失败: {e}")
+
+    def _recover_orphan_keys(self) -> bool:
+        """将误归属的模板键还原到正确的节，返回是否做了修改"""
+        changed = False
+        defaults = self.config.defaults()
+        if defaults:
+            for key, val in list(defaults.items()):
+                for section, keys in self.DEFAULT_SECTIONS.items():
+                    if (key in keys and self.config.has_section(section)
+                            and not self.config.has_option(section, key)):
+                        self.config.set(section, key, val)
+                        self.config.remove_option('DEFAULT', key)
+                        self.logger.warning(f"键 {key} 已还原到 [{section}]")
+                        changed = True
+                        break
+
+        for source_section in list(self.config.sections()):
+            if source_section.upper() == 'DEFAULT':
+                continue
+            template = self.DEFAULT_SECTIONS.get(source_section, {})
+            for key, val in list(self.config.items(source_section)):
+                if not key.strip():
+                    continue
+                if key in (self.config.defaults() or {}):
+                    continue
+                if key in template:
+                    continue
+                for tgt_section, tgt_keys in self.DEFAULT_SECTIONS.items():
+                    if (key in tgt_keys and tgt_section != source_section
+                            and self.config.has_section(tgt_section)
+                            and not self.config.has_option(tgt_section, key)):
+                        self.config.set(tgt_section, key, val)
+                        self.config.remove_option(source_section, key)
+                        self.logger.warning(
+                            f"键 {key}={val} 从 [{source_section}] 还原到 [{tgt_section}]"
+                        )
+                        changed = True
+                        break
+        return changed
 
     def _resolve_temp_folder(self, temp_folder_config: str) -> str:
         """
@@ -135,7 +272,44 @@ enabled = true
             print(f"配置文件 {self.config_file} 不存在，将生成默认配置文件")
             self._generate_default_config()
 
-        self.config.read(self.config_file, encoding='utf-8')
+        for pass_num in range(3):
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    self.config.read_file(f)
+                break
+            except configparser.Error as e:
+                if pass_num == 0:
+                    self.logger.warning(f"配置文件解析错误，正在尝试修复: {e}")
+                    self._sanitize_config_file()
+                elif pass_num == 1:
+                    self.logger.critical("修复失败，将重新生成配置文件")
+                    self._generate_default_config()
+                else:
+                    self.logger.critical(f"配置文件无法修复: {e}")
+                    print(f"\n配置文件 {self.config_file} 已损坏且无法自动修复。")
+                    print("请检查文件内容或删除后重新运行程序以生成默认配置。")
+                    print("按任意键退出...")
+                    input()
+                    raise SystemExit(1)
+
+        dirty = False
+
+        for section in self.DEFAULT_SECTIONS:
+            if not self.config.has_section(section):
+                self.config.add_section(section)
+                dirty = True
+
+        orphaned = self._recover_orphan_keys()
+
+        for section, keys in self.DEFAULT_SECTIONS.items():
+            for key, val in keys.items():
+                if not self.config.has_option(section, key):
+                    self.config.set(section, key, val)
+                    dirty = True
+                    self.logger.warning(f"配置节: [{section}] 缺少键: {key}，已自动补充默认值")
+
+        if dirty or orphaned:
+            self._regenerate_config_file()
 
         m9a_folders_str = self.config.get('Paths', 'm9a_folders')
         if m9a_folders_str:
@@ -147,9 +321,9 @@ enabled = true
         self.temp_folder = self._resolve_temp_folder(temp_folder_config)
         self._ensure_temp_folder_exists()
 
-        self.archive_folder_name = self.config.get('Paths', 'archive_folder_name', fallback='更新前存档').strip()
+        self.archive_folder_name = self.config.get('Paths', 'archive_folder_name', fallback='存档文件夹').strip()
         if not self.archive_folder_name:
-            self.archive_folder_name = '更新前存档'
+            self.archive_folder_name = '存档文件夹'
 
         self.log_max_files = self.config.getint('Logs', 'max_files', fallback=15)
         self.log_save_enabled = self.config.getboolean('Logs', 'save_enabled', fallback=True)

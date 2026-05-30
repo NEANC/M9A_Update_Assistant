@@ -85,16 +85,29 @@ m9a_folders =
             os.unlink(path)
 
     def test_default_values(self):
-        """测试默认值"""
-        cm = ConfigManager("dummy.ini", self.logger)
-        self.assertEqual(cm.cli_zip_pattern, 'M9A-win-x86_64-v*-Lite.zip')
-        self.assertEqual(cm.gui_zip_pattern, 'M9A-win-x86_64-v*-Full.zip')
-        self.assertEqual(cm.archive_folder_name, '更新前存档')
-        self.assertEqual(cm.log_max_files, 15)
-        self.assertTrue(cm.log_save_enabled)
-        self.assertEqual(cm.github_repo, 'MAA1999/M9A')
-        self.assertEqual(cm.github_release_version, 'release')
-        self.assertEqual(cm.github_proxy, '')
+        """测试默认值（含新增的 [SelfUpdate] 节自动补全）"""
+        content = (
+            "[Paths]\n"
+            "m9a_folders =\n"
+            "\n"
+            "[Logs]\n"
+            "\n"
+            "[GitHub]\n"
+            "repo = MAA1999/M9A\n"
+            "\n"
+            "[SelfUpdate]\n"
+        )
+        path = self._make_config(content)
+        try:
+            cm = ConfigManager(path, self.logger)
+            self.assertEqual(cm.archive_folder_name, '更新前存档')
+            self.assertEqual(cm.log_max_files, 15)
+            self.assertEqual(cm.github_repo, 'MAA1999/M9A')
+            self.assertEqual(cm.github_release_version, 'release')
+            self.assertEqual(cm.github_proxy, '')
+            self.assertTrue(cm.self_update_enabled)
+        finally:
+            os.unlink(path)
 
     def test_resolve_temp_folder_empty(self):
         """测试空配置时解析临时文件夹"""
