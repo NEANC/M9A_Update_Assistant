@@ -100,7 +100,7 @@ m9a_folders =
         path = self._make_config(content)
         try:
             cm = ConfigManager(path, self.logger)
-            self.assertEqual(cm.archive_folder_name, '更新前存档')
+            self.assertEqual(cm.archive_folder_name, '存档文件夹')
             self.assertEqual(cm.log_max_files, 15)
             self.assertEqual(cm.github_repo, 'MAA1999/M9A')
             self.assertEqual(cm.github_release_version, 'release')
@@ -186,7 +186,7 @@ repo = test/repo
         try:
             cm = ConfigManager(path, self.logger)
             cm.load()
-            self.assertEqual(cm.archive_folder_name, '更新前存档')
+            self.assertEqual(cm.archive_folder_name, '存档文件夹')
         finally:
             os.unlink(path)
 
