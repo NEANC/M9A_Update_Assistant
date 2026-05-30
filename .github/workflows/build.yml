@@ -55,45 +55,51 @@ jobs:
         id: generate_changelog
         run: |
           echo "=== Generating Changelog ==="
+          current_tag="${{ steps.set_tag.outputs.tag }}"
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            # Get previous tag
-            previous_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-            if [[ -n "$previous_tag" ]]; then
-              echo "Generating changelog from $previous_tag to ${{ steps.set_tag.outputs.tag }}"
+            # 查找基准版本
+            if [[ "${{ steps.set_pre.outputs.prerelease }}" == "false" ]]; then
+              # 正式版：回追到上一个稳定版 (vX.Y.Z)，包含所有 pre-release 的变更
+              previous_base=$(git tag --sort=-creatordate | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${current_tag}$" | head -1 || echo "")
+            fi
+            if [[ -z "${previous_base:-}" ]]; then
+              # pre-release 或找不到稳定版：增量（距上一个任意 tag）
+              previous_base=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+            fi
+            if [[ -n "$previous_base" ]]; then
+              echo "Generating changelog from $previous_base to $current_tag"
               # 获取完整的提交列表
-              git log --oneline "$previous_tag..HEAD" | grep -v "Merge pull request" > full_commits.txt
-              # 计算提交数量
+              git log --oneline "$previous_base..HEAD" | grep -v "Merge pull request" > full_commits.txt
               total_commits=$(wc -l < full_commits.txt)
-              # 只取前8个提交
-              head -8 full_commits.txt > CHANGELOG.md
-              # 如果提交数量超过8个，添加Full Changelog链接
-              if [[ $total_commits -gt 8 ]]; then
+              # 正式版取前15个，pre-release 取前8个
+              if [[ "${{ steps.set_pre.outputs.prerelease }}" == "false" ]]; then
+                head -15 full_commits.txt > CHANGELOG.md
+                # 正式版无论数量都放置 Full Changelog 链接
                 echo "" >> CHANGELOG.md
-                echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$previous_tag...${{ steps.set_tag.outputs.tag }}" >> CHANGELOG.md
+                echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$previous_base...$current_tag" >> CHANGELOG.md
+              else
+                head -8 full_commits.txt > CHANGELOG.md
+                if [[ $total_commits -gt 8 ]]; then
+                  echo "" >> CHANGELOG.md
+                  echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$previous_base...$current_tag" >> CHANGELOG.md
+                fi
               fi
             else
               echo "First release, no previous tag found"
               # 首次发布，只取前8个提交
               git log --oneline | grep -v "Merge pull request" | head -8 > CHANGELOG.md
             fi
+            # Add header
+            echo "## What's Changed" > temp_changelog.md
+            echo "" >> temp_changelog.md
+            cat CHANGELOG.md >> temp_changelog.md
+            mv temp_changelog.md CHANGELOG.md
           else
-            echo "Generating changelog for development build"
-            # 开发构建，只取前8个提交
-            git log --oneline --since="1 week ago" | grep -v "Merge pull request" | head -8 > CHANGELOG.md
-          fi
-          
-          # Add header to changelog
-          echo "## What's Changed" > temp_changelog.md
-          echo "" >> temp_changelog.md
-          cat CHANGELOG.md >> temp_changelog.md
-          mv temp_changelog.md CHANGELOG.md
-          
-          echo "Changelog generated:"
-          cat CHANGELOG.md
-          echo "===================="
+            echo "Skipping changelog for development build"
 
       # 上传变更日志
       - name: Upload Changelog
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v7
         with:
           name: changelog
