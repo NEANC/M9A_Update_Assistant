@@ -227,6 +227,7 @@ class M9AUpdater:
         from modules.zip_manager import ZipManager
 
         cli_zip_regex = gh_client.compile_pattern(cli_zip_pattern)
+        cli_keyword = cli_zip_pattern.replace('.zip', '').split('-')[-1].lstrip('*')
         search_dirs = [Path(temp_folder) / "ZIP", Path(temp_folder), Path.cwd()]
         all_zips = []
 
@@ -236,6 +237,9 @@ class M9AUpdater:
 
         if target_version:
             for candidate in all_zips:
+                keywords = candidate.name.replace('.zip', '').split('-')[-1]
+                if keywords != cli_keyword:
+                    continue
                 version = ZipManager.get_zip_version(str(candidate))
                 if version and version == target_version:
                     self.logger.info(f"缓存 ZIP 版本 {version} 匹配: {candidate}")
