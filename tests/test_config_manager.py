@@ -55,7 +55,7 @@ max_files = 10
 
 [GitHub]
 repo = MAA1999/M9A
-release_version = release
+m9a_update_channel = release
 proxy = http://127.0.0.1:7890
 """
         path = self._make_config(content)
@@ -158,13 +158,13 @@ repo =
         finally:
             os.unlink(path)
 
-    def test_validate_bad_release_version(self):
-        """测试非法的 release_version"""
+    def test_validate_bad_m9a_update_channel(self):
+        """测试非法的 m9a_update_channel"""
         content = r"""[Paths]
 m9a_folders = Z:\M9A
 [GitHub]
 repo = test/repo
-release_version = invalid
+m9a_update_channel = invalid
 """
         path = self._make_config(content)
         try:

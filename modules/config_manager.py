@@ -9,6 +9,8 @@ import configparser
 from pathlib import Path
 from typing import List
 
+from modules.config_migration import apply_migrations
+
 
 class ConfigManager:
     """配置管理器，负责配置初始化、加载、验证"""
@@ -26,10 +28,11 @@ class ConfigManager:
         'GitHub': {
             'repo': 'MAA1999/M9A',
             'proxy': '',
-            'release_version': 'release',
+            'm9a_update_channel': 'release',
         },
         'SelfUpdate': {
             'enabled': 'true',
+            'self_update_channel': 'release',
         },
     }
 
@@ -41,8 +44,9 @@ class ConfigManager:
         'Logs.max_files': '最大日志文件数量（超过此数量的旧日志将被删除）',
         'GitHub.repo': 'GitHub 仓库地址（格式：用户名/仓库名）',
         'GitHub.proxy': '代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080），留空表示不使用代理',
-        'GitHub.release_version': '版本选择\nrelease: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本\nlatest: 使用带有 latest 标签的正式版本',
-        'SelfUpdate.enabled': '是否启用程序自我更新',
+        'GitHub.m9a_update_channel': 'M9A 更新通道\nrelease: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本\nlatest: 使用带有 latest 标签的正式版本',
+        'SelfUpdate.enabled': '是否启用软件更新',
+        'SelfUpdate.self_update_channel': '软件更新通道\nrelease: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本\nlatest: 使用带有 latest 标签的正式版本',
     }
 
     @classmethod
@@ -83,6 +87,7 @@ class ConfigManager:
         self.github_release_version = 'release'
         self.github_proxy = ''
         self.self_update_enabled = True
+        self.self_update_channel = 'release'
 
     def _generate_default_config(self) -> None:
         """生成默认配置文件"""
@@ -292,7 +297,14 @@ class ConfigManager:
                     input()
                     raise SystemExit(1)
 
-        dirty = False
+        migrated = apply_migrations(self.config, self.config_file, self.logger)
+        if migrated:
+            self.config = configparser.ConfigParser()
+            with open(self.config_file, 'r', encoding='utf-8') as f:
+                self.config.read_file(f)
+
+        dirty = migrated
+
 
         for section in self.DEFAULT_SECTIONS:
             if not self.config.has_section(section):
@@ -329,16 +341,17 @@ class ConfigManager:
         self.log_save_enabled = self.config.getboolean('Logs', 'save_enabled', fallback=True)
 
         self.github_repo = self.config.get('GitHub', 'repo', fallback='MAA1999/M9A')
-        self.github_release_version = self.config.get('GitHub', 'release_version', fallback='release')
+        self.github_release_version = self.config.get('GitHub', 'm9a_update_channel', fallback='release')
         self.github_proxy = self.config.get('GitHub', 'proxy', fallback='').strip()
         self.self_update_enabled = self.config.getboolean('SelfUpdate', 'enabled', fallback=True)
+        self.self_update_channel = self.config.get('SelfUpdate', 'self_update_channel', fallback='release').strip()
 
         if self.github_proxy:
             self.logger.info(f"已配置代理: {self.github_proxy}")
         else:
             self.logger.info("未配置代理，若遇到网络问题请配置代理")
 
-        self.logger.info(f"Release 版本: {self.github_release_version}")
+        self.logger.info(f"M9A 更新通道: {self.github_release_version}")
 
     def validate(self) -> bool:
         """

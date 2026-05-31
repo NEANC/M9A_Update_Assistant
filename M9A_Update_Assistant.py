@@ -22,7 +22,7 @@ VERSION = "v1.10.0"
 
 
 def print_info():
-    """打印程序的版本和版权信息，发版前手动修改。"""
+    """打印程序的版本和版权信息。"""
     print("\n")
     print("+ " + " M9A Update Assistant ".center(60, "="), "+")
     print("||" + "".center(60, " ") + "||")
@@ -96,6 +96,7 @@ class M9AUpdateAssistant:
             self.config.github_proxy,
             self.config.temp_folder,
             self.logger,
+            self.config.self_update_channel,
         )
 
         self.keep_temp = False
@@ -482,7 +483,7 @@ class M9AUpdateAssistant:
     def check_self_update(self) -> bool:
         """检查自身更新"""
         if not self.config.self_update_enabled:
-            self.logger.info("已禁用自我更新")
+            self.logger.info("已禁用软件更新")
             return False
         return self._self_update.check_self_update(
             VERSION, self._github, self._download, self._zip,
