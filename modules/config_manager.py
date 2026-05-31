@@ -95,11 +95,13 @@ class ConfigManager:
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 f.write(default_config)
-            print(f"已生成默认配置文件: {self.config_file}")
-            print("请修改配置文件后重新运行程序。")
+            self.logger.info(f"已生成默认配置文件: {self.config_file}")
+            self.logger.info("请修改配置文件后重新运行程序。")
+            self.logger.info("按任意键退出...")
+            input()
             sys.exit(0)
         except IOError as e:
-            print(f"生成配置文件失败: {e}")
+            self.logger.error(f"生成配置文件失败: {e}")
             sys.exit(1)
 
     def _regenerate_config_file(self) -> None:
@@ -109,7 +111,7 @@ class ConfigManager:
         """
         lines = []
         for section in self.config.sections():
-            if section.upper() == 'DEFAULT':
+            if section.upper() == 'DEFAULT' or section == '__migrations__':
                 continue
             lines.append(f'[{section}]')
             template = self.DEFAULT_SECTIONS.get(section, {})
@@ -201,7 +203,7 @@ class ConfigManager:
                         break
 
         for source_section in list(self.config.sections()):
-            if source_section.upper() == 'DEFAULT':
+            if source_section.upper() == 'DEFAULT' or source_section == '__migrations__':
                 continue
             template = self.DEFAULT_SECTIONS.get(source_section, {})
             for key, val in list(self.config.items(source_section)):
@@ -274,7 +276,7 @@ class ConfigManager:
     def load(self) -> None:
         """加载配置文件"""
         if not os.path.exists(self.config_file):
-            print(f"配置文件 {self.config_file} 不存在，将生成默认配置文件")
+            self.logger.info("配置文件不存在，将生成默认配置文件")
             self._generate_default_config()
 
         for pass_num in range(3):
@@ -291,9 +293,9 @@ class ConfigManager:
                     self._generate_default_config()
                 else:
                     self.logger.critical(f"配置文件无法修复: {e}")
-                    print(f"\n配置文件 {self.config_file} 已损坏且无法自动修复。")
-                    print("请检查文件内容或删除后重新运行程序以生成默认配置。")
-                    print("按任意键退出...")
+                    self.logger.critical(f"配置文件 {self.config_file} 已损坏且无法自动修复。")
+                    self.logger.critical("请检查文件内容或删除后重新运行程序以生成默认配置。")
+                    self.logger.critical("按任意键退出...")
                     input()
                     raise SystemExit(1)
 

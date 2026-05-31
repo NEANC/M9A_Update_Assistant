@@ -18,6 +18,7 @@ from modules.m9a_updater import M9AUpdater
 from modules.self_updater import SelfUpdater
 
 
+# 版本号, 发版前手动修改
 VERSION = "v1.10.0"
 
 
