@@ -18,6 +18,14 @@ MIGRATIONS = [
         'new_key': 'm9a_update_channel', # 新键
         'description': '重命名 [GitHub].release_version → [GitHub].m9a_update_channel', # 日志输出描述
     },
+    {
+        'id': 2,
+        'type': 'rename_key',
+        'section': 'Paths',
+        'old_key': 'archive_folder_name',
+        'new_key': 'archive_folder_path',
+        'description': '重命名 [Paths].archive_folder_name → [Paths].archive_folder_path',
+    },
 ]
 
 def _apply_rename_key(config: configparser.ConfigParser,

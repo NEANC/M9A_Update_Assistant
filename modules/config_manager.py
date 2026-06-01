@@ -19,7 +19,7 @@ class ConfigManager:
         'Paths': {
             'm9a_folders': r'Z:\M9A',
             'temp_folder': r'Z:\Temp\M9A-Update-Assistant',
-            'archive_folder_name': '存档文件夹',
+            'archive_folder_path': '存档文件夹',
         },
         'Logs': {
             'save_enabled': 'false',
@@ -39,7 +39,7 @@ class ConfigManager:
     _COMMENTS = {
         'Paths.m9a_folders': 'M9A 文件夹路径（多个路径用逗号分隔）',
         'Paths.temp_folder': '临时文件夹路径',
-        'Paths.archive_folder_name': '配置存档文件夹名（用于保存更新前的配置）',
+        'Paths.archive_folder_path': '配置存档文件夹路径（保存更新前的配置，若不是完整路径，将自动使用当前工作目录）',
         'Logs.save_enabled': '是否保存日志文件，如遇 BUG 时请打开此选项，以获取更多调试信息',
         'Logs.max_files': '最大日志文件数量（超过此数量的旧日志将被删除）',
         'GitHub.repo': 'GitHub 仓库地址（格式：用户名/仓库名）',
@@ -78,7 +78,7 @@ class ConfigManager:
 
         self.m9a_folders: List[str] = []
         self.temp_folder = ''
-        self.archive_folder_name = '存档文件夹'
+        self.archive_folder_path = '存档文件夹'
         self.cli_zip_pattern = 'M9A-win-x86_64-v*-Lite.zip'
         self.gui_zip_pattern = 'M9A-win-x86_64-v*-Full.zip'
         self.log_max_files = 15
@@ -299,11 +299,7 @@ class ConfigManager:
                     input()
                     raise SystemExit(1)
 
-        migrated = apply_migrations(self.config, self.config_file, self.logger)
-        if migrated:
-            self.config = configparser.ConfigParser()
-            with open(self.config_file, 'r', encoding='utf-8') as f:
-                self.config.read_file(f)
+        migrated = apply_migrations(self.config, self.logger)
 
         dirty = migrated
 
@@ -335,9 +331,9 @@ class ConfigManager:
         self.temp_folder = self._resolve_temp_folder(temp_folder_config)
         self._ensure_temp_folder_exists()
 
-        self.archive_folder_name = self.config.get('Paths', 'archive_folder_name', fallback='存档文件夹').strip()
-        if not self.archive_folder_name:
-            self.archive_folder_name = '存档文件夹'
+        self.archive_folder_path = self.config.get('Paths', 'archive_folder_path', fallback='存档文件夹').strip()
+        if not self.archive_folder_path:
+            self.archive_folder_path = '存档文件夹'
 
         self.log_max_files = self.config.getint('Logs', 'max_files', fallback=15)
         self.log_save_enabled = self.config.getboolean('Logs', 'save_enabled', fallback=True)

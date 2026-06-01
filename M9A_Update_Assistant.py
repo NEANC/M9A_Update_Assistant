@@ -92,7 +92,7 @@ class M9AUpdateAssistant:
             self.logger,
         )
         self._zip = ZipManager(self.logger)
-        self._updater = M9AUpdater(self.config.archive_folder_name, self.logger)
+        self._updater = M9AUpdater(self.config.archive_folder_path, self.logger)
         self._self_update = SelfUpdater(
             self.config.github_proxy,
             self.config.temp_folder,

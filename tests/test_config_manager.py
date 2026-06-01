@@ -100,7 +100,7 @@ m9a_folders =
         path = self._make_config(content)
         try:
             cm = ConfigManager(path, self.logger)
-            self.assertEqual(cm.archive_folder_name, '存档文件夹')
+            self.assertEqual(cm.archive_folder_path, '存档文件夹')
             self.assertEqual(cm.log_max_files, 15)
             self.assertEqual(cm.github_repo, 'MAA1999/M9A')
             self.assertEqual(cm.github_release_version, 'release')
@@ -174,11 +174,11 @@ m9a_update_channel = invalid
         finally:
             os.unlink(path)
 
-    def test_archive_folder_name_fallback(self):
-        """测试存档文件夹名回退默认值"""
+    def test_archive_folder_path_fallback(self):
+        """测试 archive_folder_path 为空时回退到默认值"""
         content = r"""[Paths]
 m9a_folders = Z:\M9A
-archive_folder_name =
+archive_folder_path =
 [GitHub]
 repo = test/repo
 """
@@ -186,7 +186,7 @@ repo = test/repo
         try:
             cm = ConfigManager(path, self.logger)
             cm.load()
-            self.assertEqual(cm.archive_folder_name, '存档文件夹')
+            self.assertEqual(cm.archive_folder_path, '存档文件夹')
         finally:
             os.unlink(path)
 

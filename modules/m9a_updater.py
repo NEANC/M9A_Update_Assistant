@@ -14,24 +14,24 @@ from typing import Optional
 class M9AUpdater:
     """M9A 更新器，负责备份、清理、部署、回写 config"""
 
-    def __init__(self, archive_folder_name: str, logger: logging.Logger):
+    def __init__(self, archive_folder_path: str, logger: logging.Logger):
         """
         初始化 M9A 更新器
 
         Args:
-            archive_folder_name: 配置中的存档文件夹名或绝对路径
+            archive_folder_path: 配置中的存档文件夹名或绝对路径
             logger: 日志记录器
         """
-        self.archive_dir = Path(self._resolve_archive_dir(archive_folder_name))
+        self.archive_dir = Path(self._resolve_archive_dir(archive_folder_path))
         self.logger = logger
 
     @staticmethod
-    def _resolve_archive_dir(archive_folder_name: str) -> str:
+    def _resolve_archive_dir(archive_folder_path: str) -> str:
         """解析存档文件夹绝对路径：绝对路径直接返回，相对名拼到程序根目录"""
-        if os.path.isabs(archive_folder_name):
-            return archive_folder_name
+        if os.path.isabs(archive_folder_path):
+            return archive_folder_path
         program_root = Path(__file__).parent.parent
-        return str(program_root / archive_folder_name)
+        return str(program_root / archive_folder_path)
 
     @staticmethod
     def get_version_from_interface(m9a_folder: str, fallback_version: str = '') -> str:
