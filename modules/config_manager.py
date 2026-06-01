@@ -96,7 +96,7 @@ class ConfigManager:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 f.write(default_config)
             self.logger.info(f"已生成默认配置文件: {self.config_file}")
-            self.logger.info("请修改配置文件后重新运行程序。")
+            self.logger.info("请修改配置文件后重新运行软件。")
             self.logger.info("按任意键退出...")
             input()
             sys.exit(0)
@@ -294,7 +294,7 @@ class ConfigManager:
                 else:
                     self.logger.critical(f"配置文件无法修复: {e}")
                     self.logger.critical(f"配置文件 {self.config_file} 已损坏且无法自动修复。")
-                    self.logger.critical("请检查文件内容或删除后重新运行程序以生成默认配置。")
+                    self.logger.critical("请检查文件内容或删除后重新运行软件以生成默认配置。")
                     self.logger.critical("按任意键退出...")
                     input()
                     raise SystemExit(1)
@@ -366,7 +366,7 @@ class ConfigManager:
         for folder in self.m9a_folders:
             if not os.path.exists(folder):
                 self.logger.warning(f"M9A 文件夹路径不存在: {folder}")
-                self.logger.warning("程序将尝试创建该文件夹")
+                self.logger.warning("软件将尝试创建该文件夹")
 
         try:
             temp_path = Path(self.temp_folder)

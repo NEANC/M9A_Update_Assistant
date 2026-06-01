@@ -97,9 +97,9 @@ class ZipManager:
         expected = gh_client.get_exe_sha256_from_body(release_info, exe_name)
         if not expected:
             if allow_fallback:
-                self.logger.info("release body 中未找到 SHA256 校验值，跳过校验")
+                self.logger.info("Github API 中未找到 SHA256 校验值，跳过校验")
                 return True
-            self.logger.error("release body 中未找到 SHA256 校验值")
+            self.logger.error("Github API 中未找到 SHA256 校验值")
             return False
         actual = self.calculate_sha256(file_path)
         if actual != expected:

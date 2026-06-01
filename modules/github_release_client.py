@@ -110,7 +110,7 @@ class GitHubReleaseClient:
         """
         body = release_info.get('body', '')
         if not body:
-            self.logger.warning("release body 为空，使用默认关键词")
+            self.logger.warning("Github API: release body 为空，使用默认关键词")
             return {'cli': 'Lite', 'gui': 'Full', 'gui_keywords': ['Full']}
 
         cli_keywords = re.findall(r'(\w+)\s*=\s*命令行版', body)
@@ -121,9 +121,9 @@ class GitHubReleaseClient:
 
         if gui_keywords:
             gui_versions_str = ', '.join(gui_keywords)
-            self.logger.debug(f"从 body 中提取关键词: 命令行版={cli_keyword}, 图形界面版=[{gui_versions_str}]")
+            self.logger.debug(f"从 Github API 中提取关键词: 命令行版={cli_keyword}, 图形界面版=[{gui_versions_str}]")
         else:
-            self.logger.debug(f"从 body 中提取关键词: 命令行版={cli_keyword}, 图形界面版={gui_keyword}")
+            self.logger.debug(f"从 Github API 中提取关键词: 命令行版={cli_keyword}, 图形界面版={gui_keyword}")
 
         return {
             'cli': cli_keyword,

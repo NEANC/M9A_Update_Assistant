@@ -151,7 +151,7 @@ class M9AUpdateAssistant:
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
 
-        self.logger.debug(f"当前程序版本: {VERSION}")
+        self.logger.debug(f"当前软件版本: {VERSION}")
         self.logger.info(f"日志文件已创建: {log_file}")
         return file_handler
 
@@ -500,7 +500,7 @@ def main():
     if '--self-update-complete' in sys.argv:
         assistant = M9AUpdateAssistant()
         print_info()
-        assistant.logger.info("自更新完成，正在验证...")
+        assistant.logger.info("软件更新完成，正在验证...")
 
         # 轻量 health-check：验证配置和关键模块可用
         if not assistant.validate_config():
@@ -514,7 +514,7 @@ def main():
             bak_path.unlink()
             assistant.logger.info(f"已删除备份文件: {bak_path}")
 
-        assistant.logger.info("自更新完成，程序已就绪")
+        assistant.logger.info("软件更新完成")
         print(f"\n")
         return
 
@@ -527,11 +527,10 @@ def main():
         print_info()
         assistant = M9AUpdateAssistant()
         if assistant.check_self_update():
-            assistant.logger.info("已将新版本下载到临时文件夹，程序即将退出以完成更新...")
+            assistant.logger.info("已将新版本下载到临时文件夹，即将退出以完成更新...")
             sys.exit(0)
         else:
-            assistant.logger.info("当前已是最新版本")
-            print(f"\n当前已是最新版本，无需更新。按任意键退出...")
+            print(f"\n按任意键退出...")
             input()
             return
 
@@ -550,7 +549,7 @@ def main():
 
         need_exit = assistant.check_self_update()
         if need_exit:
-            print(f"\n程序将自动退出以完成自更新，稍后自动重启...\n")
+            print(f"\n软件将自动退出以完成更新，稍后自动重启...\n")
             sys.exit(0)
 
         sys.exit(0 if success else 1)
@@ -560,7 +559,7 @@ def main():
         sys.exit(0)
     except Exception as e:
         logger = logging.getLogger("M9AUpdateAssistant")
-        logger.critical(f"程序执行出错: {e}")
+        logger.critical(f"软件执行出错: {e}")
         raise
 
 
