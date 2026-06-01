@@ -268,6 +268,17 @@ class SelfUpdater:
         self.logger.critical("未找到符合命名规范的 exe 文件")
         return '', ''
 
+    @staticmethod
+    def _get_exe_path() -> Path:
+        """
+        获取当前可执行文件的真实路径
+        sys.argv[0] 在所有打包模式下均指向用户双击的真实 exe
+        """
+        argv_exe = Path(sys.argv[0]).resolve()
+        if argv_exe.suffix.lower() == '.exe':
+            return argv_exe
+        return Path(sys.executable).resolve()
+
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
                              zip_manager=None) -> None:
         """
@@ -278,7 +289,7 @@ class SelfUpdater:
         3. 带版本号备份
         4. 启动新 exe --self-update-complete
         """
-        current_exe = Path(sys.executable)
+        current_exe = self._get_exe_path()
         backup_exe = current_exe.with_name(f"{current_exe.name}.bak")
 
         if not tmp_path.exists():
@@ -329,9 +340,9 @@ class SelfUpdater:
         """尝试回滚自身更新"""
         logger = logging.getLogger("M9AUpdateAssistant")
         try:
-            backup_exe = Path(sys.executable).with_suffix('.exe.bak')
+            current_exe = SelfUpdater._get_exe_path()
+            backup_exe = current_exe.with_name(f"{current_exe.name}.bak")
             if backup_exe.exists():
-                current_exe = Path(sys.executable)
                 if current_exe.exists():
                     current_exe.unlink()
                 backup_exe.rename(current_exe)

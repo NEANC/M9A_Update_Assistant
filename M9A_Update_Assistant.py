@@ -505,7 +505,9 @@ def main():
             sys.exit(1)
         assistant.logger.info("新版本验证通过")
 
-        bak_path = Path(sys.executable).with_suffix('.exe.bak')
+        from modules.self_updater import SelfUpdater
+        exe_path = SelfUpdater._get_exe_path()
+        bak_path = exe_path.with_name(f"{exe_path.name}.bak")
         if bak_path.exists():
             bak_path.unlink()
             assistant.logger.info(f"已删除备份文件: {bak_path}")
