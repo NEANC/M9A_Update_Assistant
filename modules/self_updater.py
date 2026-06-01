@@ -163,7 +163,7 @@ class SelfUpdater:
                 self.logger.error("未能获取版本号")
                 return False
 
-            self.logger.info(f"远程版本: {latest_version} (通道: {self.self_update_channel})")
+            self.logger.debug(f"远程版本: {latest_version} (通道: {self.self_update_channel})")
             if self._version_newer_than(current_version, latest_version):
                 self.logger.info(f"检测到新版本: {latest_version}")
                 if self._is_build_tag(current_version):
@@ -228,7 +228,7 @@ class SelfUpdater:
                 if attempt > 0:
                     self.logger.info(f"重试下载更新文件（{attempt + 1}/{max_retries}）")
                 else:
-                    self.logger.info(f"开始下载: {exe_url}")
+                    self.logger.debug(f"开始下载: {exe_url}")
 
                 if not download_manager.download_file_with_progress(exe_url, str(tmp_path)):
                     self.logger.error("下载失败")
@@ -257,7 +257,6 @@ class SelfUpdater:
             subprocess.Popen(
                 ['cmd', '/c', script],
                 creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS,
-                close_fds=True,
             )
             return True
 
