@@ -404,7 +404,7 @@ class M9AUpdateAssistant:
             cli_has_deps = self._zip.check_lite_zip_has_deps(cli_zip)
         else:
             info = self._updater.find_lite_zip(
-                self.config.cli_zip_pattern, self.config.temp_folder, self._github,
+                self.config.cli_zip_pattern, self.config.temp_folder, self._github, latest_version,
             )
             if info:
                 if not self._zip.verify_zip_integrity(info, release_info, Path(info).name, self._github):
