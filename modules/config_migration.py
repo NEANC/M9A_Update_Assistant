@@ -115,8 +115,9 @@ def apply_migrations(config: configparser.ConfigParser,
             continue
         try:
             handler = MIGRATION_HANDLERS[migration['type']]
-            if not handler(config, **{k: v for k, v in migration.items()
-                                       if k not in ('id', 'type', 'description')}):
+            kwargs = {k: v for k, v in migration.items()
+                      if k not in ('id', 'type', 'description')}
+            if not handler(config, **kwargs):
                 continue
             desc = migration.get('description', f'#{mid}')
             logger.info(f"检测到需要迁移 [{mid}]: {desc}")

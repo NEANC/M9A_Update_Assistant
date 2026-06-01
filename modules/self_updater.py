@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
-import hashlib
 import logging
 import re
 import shutil
@@ -280,7 +279,7 @@ class SelfUpdater:
         return Path(sys.executable).resolve()
 
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
-                             zip_manager=None) -> None:
+                             zip_manager: ZipManager) -> None:
         """
         合并的 exe 替换逻辑：供 check_self_update() 和 --self-update 共用
 
@@ -298,12 +297,7 @@ class SelfUpdater:
         if sha_path.exists():
             expected = sha_path.read_text(encoding='ascii').strip()
             self.logger.info("重新校验更新文件完整性...")
-            if zip_manager:
-                ok = zip_manager.verify_file_sha256(str(tmp_path), expected)
-            else:
-                actual = hashlib.sha256(tmp_path.read_bytes()).hexdigest()
-                ok = (actual == expected)
-            if not ok:
+            if not zip_manager.verify_file_sha256(str(tmp_path), expected):
                 self.logger.critical("更新文件校验失败，放弃更新")
                 tmp_path.unlink(missing_ok=True)
                 sha_path.unlink(missing_ok=True)
