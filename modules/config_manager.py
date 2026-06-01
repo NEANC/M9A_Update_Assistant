@@ -28,11 +28,11 @@ class ConfigManager:
         'GitHub': {
             'repo': 'MAA1999/M9A',
             'proxy': '',
-            'm9a_update_channel': 'release',
+            'm9a_update_channel': 'preview',
         },
         'SelfUpdate': {
             'enabled': 'true',
-            'self_update_channel': 'release',
+            'self_update_channel': 'preview',
         },
     }
 
@@ -44,9 +44,9 @@ class ConfigManager:
         'Logs.max_files': '最大日志文件数量（超过此数量的旧日志将被删除）',
         'GitHub.repo': 'GitHub 仓库地址（格式：用户名/仓库名）',
         'GitHub.proxy': '代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080），留空表示不使用代理',
-        'GitHub.m9a_update_channel': 'M9A 更新通道\nrelease: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本\nlatest: 使用带有 latest 标签的正式版本',
-        'SelfUpdate.enabled': '是否启用软件更新',
-        'SelfUpdate.self_update_channel': '软件更新通道\nrelease: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本\nlatest: 使用带有 latest 标签的正式版本',
+        'GitHub.m9a_update_channel': 'M9A 更新通道\npreview: 包括预发布版本 (Alpha/Beta/RC)\nstable: 仅正式发布版本',
+        'SelfUpdate.enabled': '是否启用软件自我更新',
+        'SelfUpdate.self_update_channel': '自我更新版本通道\npreview: 包括预发布版本 (Alpha/Beta/RC)\nstable: 仅正式发布版本',
     }
 
     @classmethod
@@ -84,10 +84,10 @@ class ConfigManager:
         self.log_max_files = 15
         self.log_save_enabled = False
         self.github_repo = 'MAA1999/M9A'
-        self.github_release_version = 'release'
+        self.github_release_version = 'preview'
         self.github_proxy = ''
         self.self_update_enabled = True
-        self.self_update_channel = 'release'
+        self.self_update_channel = 'preview'
 
     def _generate_default_config(self) -> None:
         """生成默认配置文件"""
@@ -339,10 +339,10 @@ class ConfigManager:
         self.log_save_enabled = self.config.getboolean('Logs', 'save_enabled', fallback=True)
 
         self.github_repo = self.config.get('GitHub', 'repo', fallback='MAA1999/M9A')
-        self.github_release_version = self.config.get('GitHub', 'm9a_update_channel', fallback='release')
+        self.github_release_version = self.config.get('GitHub', 'm9a_update_channel', fallback='preview')
         self.github_proxy = self.config.get('GitHub', 'proxy', fallback='').strip()
         self.self_update_enabled = self.config.getboolean('SelfUpdate', 'enabled', fallback=True)
-        self.self_update_channel = self.config.get('SelfUpdate', 'self_update_channel', fallback='release').strip()
+        self.self_update_channel = self.config.get('SelfUpdate', 'self_update_channel', fallback='preview').strip()
 
         if self.github_proxy:
             self.logger.info(f"已配置代理: {self.github_proxy}")
@@ -380,8 +380,9 @@ class ConfigManager:
             self.logger.error("配置错误: GitHub 仓库地址未配置")
             return False
 
-        if self.github_release_version not in ['release', 'latest']:
-            self.logger.error(f"配置错误: 未知的 Release 版本类型: {self.github_release_version}")
+        if self.github_release_version not in ['preview', 'stable']:
+            self.logger.error(f"配置错误: 未知的 M9A 更新通道: {self.github_release_version}")
+            self.logger.error("可用选项: preview (含预发布), stable (仅正式版)")
             return False
 
         self.logger.info("配置验证通过")

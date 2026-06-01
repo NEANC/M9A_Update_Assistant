@@ -490,10 +490,6 @@ class M9AUpdateAssistant:
             VERSION, self._github, self._download, self._zip,
         )
 
-    def self_update_perform(self) -> None:
-        """执行自身更新替换"""
-        self._self_update.perform(self._zip)
-
 
 def main():
     """主函数"""
@@ -516,11 +512,6 @@ def main():
 
         assistant.logger.info("软件更新完成")
         print(f"\n")
-        return
-
-    if '--self-update' in sys.argv:
-        assistant = M9AUpdateAssistant()
-        assistant.self_update_perform()
         return
 
     if any(flag in sys.argv for flag in ('-U', '--update', '--Update')):

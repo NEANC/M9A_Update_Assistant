@@ -18,7 +18,7 @@ class GitHubReleaseClient:
 
         Args:
             repo: GitHub 仓库地址（格式：用户名/仓库名）
-            release_version: Release 版本选择（release 或 latest）
+            release_version: Release 版本选择（preview 或 stable）
             proxy: 代理地址
             logger: 日志记录器
         """
@@ -26,6 +26,14 @@ class GitHubReleaseClient:
         self.release_version = release_version
         self.proxy = proxy
         self.logger = logger
+
+    def _resolve_channel(self) -> str:
+        """解析通道配置，兼容旧值 release→preview, latest→stable"""
+        if self.release_version in ('preview', 'release'):
+            return 'preview'
+        if self.release_version in ('stable', 'latest'):
+            return 'stable'
+        return 'preview'
 
     @staticmethod
     def compile_pattern(pattern: str) -> re.Pattern:
@@ -57,23 +65,22 @@ class GitHubReleaseClient:
                 headers = {'User-Agent': 'M9A-Update-Assistant'}
                 proxies = {'http': self.proxy, 'https': self.proxy} if self.proxy else None
 
-                if self.release_version == 'release':
+                channel = self._resolve_channel()
+                if channel == 'preview':
                     api_url = f"https://api.github.com/repos/{self.repo}/releases"
                     response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
                     response.raise_for_status()
                     releases = response.json()
+                    releases = [r for r in releases if not r.get('draft')]
                     if not releases:
-                        self.logger.error("未找到任何 release")
+                        self.logger.error("未找到任何有效的 release")
                         return None
                     release_info = releases[0]
-                elif self.release_version == 'latest':
+                else:
                     api_url = f"https://api.github.com/repos/{self.repo}/releases/latest"
                     response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
                     response.raise_for_status()
                     release_info = response.json()
-                else:
-                    self.logger.error(f"未知的 release_version: {self.release_version}")
-                    return None
 
                 self.logger.info(f"GitHub 版本: {release_info.get('tag_name', 'Unknown')}")
                 return release_info

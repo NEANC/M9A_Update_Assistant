@@ -55,7 +55,7 @@ max_files = 10
 
 [GitHub]
 repo = MAA1999/M9A
-m9a_update_channel = release
+m9a_update_channel = preview
 proxy = http://127.0.0.1:7890
 """
         path = self._make_config(content)
@@ -66,7 +66,7 @@ proxy = http://127.0.0.1:7890
             self.assertTrue(cm.log_save_enabled)
             self.assertEqual(cm.log_max_files, 10)
             self.assertEqual(cm.github_repo, 'MAA1999/M9A')
-            self.assertEqual(cm.github_release_version, 'release')
+            self.assertEqual(cm.github_release_version, 'preview')
             self.assertEqual(cm.github_proxy, 'http://127.0.0.1:7890')
         finally:
             os.unlink(path)
@@ -103,7 +103,7 @@ m9a_folders =
             self.assertEqual(cm.archive_folder_path, '存档文件夹')
             self.assertEqual(cm.log_max_files, 15)
             self.assertEqual(cm.github_repo, 'MAA1999/M9A')
-            self.assertEqual(cm.github_release_version, 'release')
+            self.assertEqual(cm.github_release_version, 'preview')
             self.assertEqual(cm.github_proxy, '')
             self.assertTrue(cm.self_update_enabled)
         finally:
