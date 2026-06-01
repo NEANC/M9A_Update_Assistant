@@ -26,6 +26,42 @@ MIGRATIONS = [
         'new_key': 'archive_folder_path',
         'description': '重命名 [Paths].archive_folder_name → [Paths].archive_folder_path',
     },
+    {
+        'id': 3,
+        'type': 'rename_value',
+        'section': 'SelfUpdate',
+        'key': 'self_update_channel',
+        'old_value': 'release',
+        'new_value': 'preview',
+        'description': 'SelfUpdate self_update_channel: release → preview',
+    },
+    {
+        'id': 4,
+        'type': 'rename_value',
+        'section': 'SelfUpdate',
+        'key': 'self_update_channel',
+        'old_value': 'latest',
+        'new_value': 'stable',
+        'description': 'SelfUpdate self_update_channel: latest → stable',
+    },
+    {
+        'id': 5,
+        'type': 'rename_value',
+        'section': 'GitHub',
+        'key': 'm9a_update_channel',
+        'old_value': 'release',
+        'new_value': 'preview',
+        'description': 'GitHub m9a_update_channel: release → preview',
+    },
+    {
+        'id': 6,
+        'type': 'rename_value',
+        'section': 'GitHub',
+        'key': 'm9a_update_channel',
+        'old_value': 'latest',
+        'new_value': 'stable',
+        'description': 'GitHub m9a_update_channel: latest → stable',
+    },
 ]
 
 def _apply_rename_key(config: configparser.ConfigParser,
@@ -42,8 +78,23 @@ def _apply_rename_key(config: configparser.ConfigParser,
     return True
 
 
+def _apply_rename_value(config: configparser.ConfigParser,
+                         section: str, key: str, old_value: str,
+                         new_value: str) -> bool:
+    """通用值迁移：section 下 key 的 old_value → new_value"""
+    if not config.has_section(section):
+        return False
+    if not config.has_option(section, key):
+        return False
+    if config.get(section, key).strip() != old_value:
+        return False
+    config.set(section, key, new_value)
+    return True
+
+
 MIGRATION_HANDLERS = {
     'rename_key': _apply_rename_key,
+    'rename_value': _apply_rename_value,
 }
 
 

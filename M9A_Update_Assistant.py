@@ -404,7 +404,7 @@ class M9AUpdateAssistant:
             cli_has_deps = self._zip.check_lite_zip_has_deps(cli_zip)
         else:
             info = self._updater.find_lite_zip(
-                self.config.cli_zip_pattern, self.config.temp_folder, self._github,
+                self.config.cli_zip_pattern, self.config.temp_folder, self._github, latest_version,
             )
             if info:
                 if not self._zip.verify_zip_integrity(info, release_info, Path(info).name, self._github):
@@ -490,10 +490,6 @@ class M9AUpdateAssistant:
             VERSION, self._github, self._download, self._zip,
         )
 
-    def self_update_perform(self) -> None:
-        """执行自身更新替换"""
-        self._self_update.perform(self._zip)
-
 
 def main():
     """主函数"""
@@ -516,11 +512,6 @@ def main():
 
         assistant.logger.info("软件更新完成")
         print(f"\n")
-        return
-
-    if '--self-update' in sys.argv:
-        assistant = M9AUpdateAssistant()
-        assistant.self_update_perform()
         return
 
     if any(flag in sys.argv for flag in ('-U', '--update', '--Update')):

@@ -185,3 +185,4 @@ cython_debug/
 .cursorindexingignore
 /更新前存档
 /测试存档
+gpt.md

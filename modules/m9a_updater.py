@@ -251,6 +251,8 @@ class M9AUpdater:
                 if version and version == target_version:
                     self.logger.info(f"缓存 ZIP 版本 {version} 匹配: {candidate}")
                     return str(candidate)
+            self.logger.warning(f"未找到版本 {target_version} 的缓存 ZIP，将重新下载")
+            return None
 
         for candidate in all_zips:
             if cli_zip_regex.match(candidate.name):

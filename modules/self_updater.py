@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
+import hashlib
 import logging
-import os
 import re
+import shutil
 import subprocess
 import sys
 import requests
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Tuple
 
 from modules.download_manager import DownloadManager
 from modules.github_release_client import GitHubReleaseClient
@@ -20,9 +21,10 @@ class SelfUpdater:
     """自更新器，负责自我更新检查、下载、替换、回滚"""
 
     SELF_UPDATE_REPO = "NEANC/M9A_Update_Assistant"
+    ASSET_PATTERN = re.compile(r'^M9A_Update_Assistant-(Nuitka|PyInstaller)-v[\d.]+.*\.exe$')
 
     def __init__(self, proxy: str, temp_folder: str, logger: logging.Logger,
-                 self_update_channel: str = 'release'):
+                 self_update_channel: str = 'preview'):
         """
         初始化自更新器
 
@@ -30,7 +32,7 @@ class SelfUpdater:
             proxy: 代理地址
             temp_folder: 临时文件夹路径
             logger: 日志记录器
-            self_update_channel: 自我更新版本通道 ('release', 'latest')
+            self_update_channel: 自我更新版本通道 ('preview', 'stable')
         """
         self.proxy = proxy
         self.temp_folder = temp_folder
@@ -59,7 +61,7 @@ class SelfUpdater:
 
     @staticmethod
     def version_to_tuple(v: str) -> Tuple[int, ...]:
-        """将版本号字符串转换为元组用于比较，兼容预发布标签"""
+        """将版本号字符串转换为元组用于比较，兼容 vX.Y.Z 和 vX.Y.Z-prerelease.N"""
         try:
             v = v.lstrip('v').split('-')[0]
             core = tuple(map(int, v.split('.')))
@@ -115,17 +117,22 @@ class SelfUpdater:
 
     @staticmethod
     def _is_build_tag(v: str) -> bool:
-        """检查版本号是否为无标签构建格式（如 v0.0.1-build.gXXXXXX）"""
-        return bool(re.search(r'\d-build\.g[a-f0-9]{7}', v))
+        """检查版本号是否为构建版本（如 v0.0.1-build.gXXXXXX 或 v1.11.5-beta.5-2-build.ae83e00）"""
+        return bool(re.search(r'-build\b', v))
+
+    def _resolve_channel(self) -> str:
+        """解析通道配置，兼容旧值 release→preview, latest→stable"""
+        if self.self_update_channel in ('preview', 'release'):
+            return 'preview'
+        if self.self_update_channel in ('stable', 'latest'):
+            return 'stable'
+        return 'preview'
 
     def check_self_update(self, current_version: str, gh_client: GitHubReleaseClient,
                            download_manager: DownloadManager,
                            zip_manager: ZipManager) -> bool:
         """
         检查并准备自身更新
-
-        下载新版本 exe 并校验后，安排退出后自动替换。
-        实际替换由 --self-update 模式完成。
 
         Returns:
             bool: 是否需要退出以完成更新
@@ -141,13 +148,15 @@ class SelfUpdater:
             headers = {'User-Agent': 'M9A-Update-Assistant'}
             proxies = {'http': self.proxy, 'https': self.proxy} if self.proxy else None
 
-            if self.self_update_channel == 'release':
+            channel = self._resolve_channel()
+            if channel == 'preview':
                 api_url = f"https://api.github.com/repos/{self.SELF_UPDATE_REPO}/releases"
                 response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
                 response.raise_for_status()
                 releases = response.json()
+                releases = [r for r in releases if not r.get('draft')]
                 if not releases:
-                    self.logger.error("未找到任何版本")
+                    self.logger.error("未找到任何有效的 release")
                     return False
                 release_info = releases[0]
             else:
@@ -161,12 +170,13 @@ class SelfUpdater:
                 self.logger.error("未能获取版本号")
                 return False
 
-            self.logger.debug(f"远程版本: {latest_version} (通道: {self.self_update_channel})")
+            self.logger.debug(f"远程版本: {latest_version} (通道: {channel})")
+            if self._is_build_tag(current_version):
+                self.logger.info("当前为 Build 版本，跳过更新")
+                return False
+
             if self._version_newer_than(current_version, latest_version):
                 self.logger.info(f"检测到新版本: {latest_version}")
-                if self._is_build_tag(current_version):
-                    self.logger.info("当前为 Build 版本，跳过更新")
-                    return False
             else:
                 cur_tuple = self.version_to_tuple(current_version)
                 lat_tuple = self.version_to_tuple(latest_version)
@@ -176,33 +186,8 @@ class SelfUpdater:
                     self.logger.error("版本号校验错误，跳过更新")
                 return False
 
-            assets = release_info.get('assets', [])
-            exe_url = None
-            exe_name = None
-
-            primary_keyword = package_type
-            secondary_keyword = "PyInstaller" if package_type == "Nuitka" else "Nuitka"
-
-            for asset in assets:
-                asset_name = asset.get('name', '')
-                if primary_keyword in asset_name and asset_name.endswith('.exe'):
-                    exe_url = asset.get('browser_download_url')
-                    exe_name = asset_name
-                    self.logger.info(f"找到 {primary_keyword} 版本: {exe_name}")
-                    break
-
+            exe_url, exe_name = self._match_asset(release_info, package_type)
             if not exe_url:
-                self.logger.warning(f"未找到 {primary_keyword} 版本，尝试查找 {secondary_keyword} 版本")
-                for asset in assets:
-                    asset_name = asset.get('name', '')
-                    if secondary_keyword in asset_name and asset_name.endswith('.exe'):
-                        exe_url = asset.get('browser_download_url')
-                        exe_name = asset_name
-                        self.logger.info(f"找到 {secondary_keyword} 版本: {exe_name}")
-                        break
-
-            if not exe_url:
-                self.logger.critical("未找到带有 Nuitka 或 PyInstaller 标签的 exe 文件")
                 return False
 
             temp_dir = Path(self.temp_folder)
@@ -238,24 +223,14 @@ class SelfUpdater:
 
             else:
                 self.logger.critical("软件更新下载校验失败，已达到最大重试次数，跳过更新")
-                try:
-                    tmp_path.unlink()
-                except Exception:
-                    pass
-                try:
-                    sha_path.unlink()
-                except Exception:
-                    pass
+                tmp_path.unlink(missing_ok=True)
+                sha_path.unlink(missing_ok=True)
                 return False
 
             self.logger.info("新版本已下载并校验通过")
-            script = self._generate_self_update_script()
             self.logger.warning("软件将在退出后自动替换")
 
-            subprocess.Popen(
-                ['cmd', '/c', script],
-                creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS,
-            )
+            self._replace_executable(tmp_path, sha_path, zip_manager)
             return True
 
         except requests.RequestException as e:
@@ -265,92 +240,89 @@ class SelfUpdater:
             self.logger.critical(f"检查软件更新时出错: {e}")
             return False
 
-    def _generate_self_update_script(self) -> str:
+    def _match_asset(self, release_info, package_type: str) -> Tuple[str, str]:
+        """严格匹配 asset：正则校验命名格式，Nuitka 优先，PyInstaller 回退"""
+        primary_keyword = package_type
+        secondary_keyword = "PyInstaller" if package_type == "Nuitka" else "Nuitka"
+        assets = release_info.get('assets', [])
+
+        candidates = []
+        for asset in assets:
+            asset_name = asset.get('name', '')
+            if self.ASSET_PATTERN.match(asset_name):
+                candidates.append(asset_name)
+                self.logger.debug(f"候选 asset: {asset_name} ({asset.get('size', 0) / (1024*1024):.2f} MB)")
+
+        for asset in assets:
+            asset_name = asset.get('name', '')
+            if self.ASSET_PATTERN.match(asset_name) and primary_keyword in asset_name:
+                self.logger.info(f"找到 {primary_keyword} 版本: {asset_name}")
+                return asset.get('browser_download_url', ''), asset_name
+
+        for asset in assets:
+            asset_name = asset.get('name', '')
+            if self.ASSET_PATTERN.match(asset_name) and secondary_keyword in asset_name:
+                self.logger.info(f"未找到 {primary_keyword} 版本，降级使用 {secondary_keyword} 版本: {asset_name}")
+                return asset.get('browser_download_url', ''), asset_name
+
+        self.logger.critical("未找到符合命名规范的 exe 文件")
+        return '', ''
+
+    def _replace_executable(self, tmp_path: Path, sha_path: Path,
+                             zip_manager=None) -> None:
         """
-        生成自更新 CMD 脚本，用于在程序退出后替换自身
+        合并的 exe 替换逻辑：供 check_self_update() 和 --self-update 共用
 
-        Returns:
-            生成的 .bat 脚本路径
-        """
-        current_exe = sys.executable
-        temp_dir = Path(self.temp_folder)
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        script_path = temp_dir / "self_update.bat"
-
-        script_content = (
-            f'@echo off\r\n'
-            f'echo 等待主进程退出...\r\n'
-            f':waitloop\r\n'
-            f'timeout /t 1 /nobreak >nul\r\n'
-            f'tasklist /FI "PID eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul\r\n'
-            f'if not errorlevel 1 goto waitloop\r\n'
-            f'echo 正在启动软件更新...\r\n'
-            f'start "" /wait "{current_exe}" --self-update\r\n'
-            f'del "%~f0"\r\n'
-        )
-        script_path.write_text(script_content, encoding='gbk')
-        self.logger.debug(f"软件更新脚本已生成: {script_path}")
-        return str(script_path)
-
-    def perform(self, zip_manager=None) -> None:
-        """
-        执行自身更新替换
-
-        1. 重新校验 new.exe.tmp 的 SHA256
-        2. 将当前 exe 重命名为 .bak
-        3. 将 new.exe.tmp 移动为当前 exe
+        1. SHA256 二次校验
+        2. 同盘暂存 → 原子替换
+        3. 带版本号备份
         4. 启动新 exe --self-update-complete
         """
-        tmp_path = Path(self.temp_folder) / "M9A_Update_Assistant_new.exe.tmp"
-        sha_path = Path(self.temp_folder) / "M9A_Update_Assistant_new.sha256"
         current_exe = Path(sys.executable)
-        backup_exe = current_exe.with_suffix('.exe.bak')
+        backup_exe = current_exe.with_name(f"{current_exe.name}.bak")
 
         if not tmp_path.exists():
-            self.logger.critical(f"更新文件不存在: {tmp_path}")
-            sys.exit(1)
+            raise RuntimeError(f"更新文件不存在: {tmp_path}")
 
-        if zip_manager and sha_path.exists():
+        if sha_path.exists():
             expected = sha_path.read_text(encoding='ascii').strip()
             self.logger.info("重新校验更新文件完整性...")
-            if not zip_manager.verify_file_sha256(str(tmp_path), expected):
+            if zip_manager:
+                ok = zip_manager.verify_file_sha256(str(tmp_path), expected)
+            else:
+                actual = hashlib.sha256(tmp_path.read_bytes()).hexdigest()
+                ok = (actual == expected)
+            if not ok:
                 self.logger.critical("更新文件校验失败，放弃更新")
-                try:
-                    tmp_path.unlink()
-                except Exception:
-                    pass
-                try:
-                    sha_path.unlink()
-                except Exception:
-                    pass
-                sys.exit(1)
+                tmp_path.unlink(missing_ok=True)
+                sha_path.unlink(missing_ok=True)
+                raise RuntimeError("SHA256 校验失败")
 
-        self.logger.info(f"开始替换: {current_exe}")
+        staged_path = current_exe.with_name(f"{current_exe.name}.new")
+        shutil.copy2(tmp_path, staged_path)
 
         try:
             if backup_exe.exists():
                 backup_exe.unlink()
             current_exe.rename(backup_exe)
-            self.logger.info(f"已备份: {backup_exe}")
+            self.logger.info(f"已备份原程序: {backup_exe}")
 
-            tmp_path.rename(current_exe)
-            self.logger.info(f"已替换: {current_exe}")
+            staged_path.rename(current_exe)
+            self.logger.info(f"已替换为新程序: {current_exe}")
 
-            if sha_path.exists():
-                sha_path.unlink()
+            tmp_path.unlink(missing_ok=True)
+            sha_path.unlink(missing_ok=True)
 
-            self.logger.info("启动新版本完成更新...")
             subprocess.Popen(
                 [str(current_exe), '--self-update-complete'],
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-                close_fds=True,
+                creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS,
             )
-        except Exception as e:
-            self.logger.critical(f"替换失败: {e}")
+        except Exception:
+            self.logger.critical("替换失败")
             if backup_exe.exists() and not current_exe.exists():
                 backup_exe.rename(current_exe)
                 self.logger.info("已回滚")
-            sys.exit(1)
+            raise
 
     @staticmethod
     def rollback() -> None:
