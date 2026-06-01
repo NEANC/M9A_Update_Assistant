@@ -117,8 +117,8 @@ class SelfUpdater:
 
     @staticmethod
     def _is_build_tag(v: str) -> bool:
-        """检查版本号是否为无标签构建格式（如 v0.0.1-build.gXXXXXX）"""
-        return bool(re.search(r'\d-build\.g[a-f0-9]{7}', v))
+        """检查版本号是否为构建版本（如 v0.0.1-build.gXXXXXX 或 v1.11.5-beta.5-2-build.ae83e00）"""
+        return bool(re.search(r'-build\b', v))
 
     def _resolve_channel(self) -> str:
         """解析通道配置，兼容旧值 release→preview, latest→stable"""
@@ -171,11 +171,12 @@ class SelfUpdater:
                 return False
 
             self.logger.debug(f"远程版本: {latest_version} (通道: {channel})")
+            if self._is_build_tag(current_version):
+                self.logger.info("当前为 Build 版本，跳过更新")
+                return False
+
             if self._version_newer_than(current_version, latest_version):
                 self.logger.info(f"检测到新版本: {latest_version}")
-                if self._is_build_tag(current_version):
-                    self.logger.info("当前为 Build 版本，跳过更新")
-                    return False
             else:
                 cur_tuple = self.version_to_tuple(current_version)
                 lat_tuple = self.version_to_tuple(latest_version)
