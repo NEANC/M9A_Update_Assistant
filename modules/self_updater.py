@@ -60,8 +60,6 @@ class SelfUpdater:
     @staticmethod
     def version_to_tuple(v: str) -> Tuple[int, ...]:
         """将版本号字符串转换为元组用于比较，兼容预发布标签"""
-        PRERELEASE_WEIGHT = {'alpha': 1, 'beta': 2, 'rc': 3}
-
         try:
             v = v.lstrip('v').split('-')[0]
             core = tuple(map(int, v.split('.')))
