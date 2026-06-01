@@ -79,6 +79,7 @@ class SelfUpdater:
 
         预发布 → 正式版始终视为升级
         alpha < beta < rc < stable
+        alpha.1 < alpha.2, beta.1 < beta.2, rc.1 < rc.2
         """
         cur_tuple = self.version_to_tuple(current)
         lat_tuple = self.version_to_tuple(latest)
@@ -104,13 +105,15 @@ class SelfUpdater:
         return False
 
     @staticmethod
-    def _prerelease_weight(v: str) -> int:
-        """返回预发布标签权重：alpha=1, beta=2, rc=3"""
-        match = re.search(r'-(alpha|beta|rc)', v)
+    def _prerelease_weight(v: str) -> Tuple[int, int]:
+        """返回预发布权重：alpha=(1, N), beta=(2, N), rc=(3, N)，缺数字时 N=0"""
+        WEIGHT_MAP = {'alpha': 1, 'beta': 2, 'rc': 3}
+        match = re.search(r'-(alpha|beta|rc)(?:\.(\d+))?', v)
         if not match:
-            return 0
+            return (0, 0)
         kind = match.group(1)
-        return {'alpha': 1, 'beta': 2, 'rc': 3}.get(kind, 0)
+        num = int(match.group(2)) if match.group(2) else 0
+        return (WEIGHT_MAP.get(kind, 0), num)
 
     @staticmethod
     def _is_build_tag(v: str) -> bool:
