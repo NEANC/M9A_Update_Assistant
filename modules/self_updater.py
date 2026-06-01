@@ -21,7 +21,8 @@ class SelfUpdater:
 
     SELF_UPDATE_REPO = "NEANC/M9A_Update_Assistant"
 
-    def __init__(self, proxy: str, temp_folder: str, logger: logging.Logger):
+    def __init__(self, proxy: str, temp_folder: str, logger: logging.Logger,
+                 self_update_channel: str = 'release'):
         """
         初始化自更新器
 
@@ -29,10 +30,12 @@ class SelfUpdater:
             proxy: 代理地址
             temp_folder: 临时文件夹路径
             logger: 日志记录器
+            self_update_channel: 自我更新版本通道 ('release', 'latest')
         """
         self.proxy = proxy
         self.temp_folder = temp_folder
         self.logger = logger
+        self.self_update_channel = self_update_channel
 
     @staticmethod
     def detect_package_type() -> Tuple[bool, str]:
@@ -126,7 +129,7 @@ class SelfUpdater:
         Returns:
             bool: 是否需要退出以完成更新
         """
-        self.logger.info("开始检查程序版本更新...")
+        self.logger.info("开始检查软件版本...")
 
         is_bundled, package_type = self.detect_package_type()
         if not is_bundled:
@@ -137,12 +140,27 @@ class SelfUpdater:
             headers = {'User-Agent': 'M9A-Update-Assistant'}
             proxies = {'http': self.proxy, 'https': self.proxy} if self.proxy else None
 
-            api_url = f"https://api.github.com/repos/{self.SELF_UPDATE_REPO}/releases/latest"
-            response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
-            response.raise_for_status()
-            release_info = response.json()
+            if self.self_update_channel == 'release':
+                api_url = f"https://api.github.com/repos/{self.SELF_UPDATE_REPO}/releases"
+                response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
+                response.raise_for_status()
+                releases = response.json()
+                if not releases:
+                    self.logger.error("未找到任何版本")
+                    return False
+                release_info = releases[0]
+            else:
+                api_url = f"https://api.github.com/repos/{self.SELF_UPDATE_REPO}/releases/latest"
+                response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
+                response.raise_for_status()
+                release_info = response.json()
 
             latest_version = release_info.get('tag_name', '')
+            if not latest_version:
+                self.logger.error("未能获取版本号")
+                return False
+
+            self.logger.info(f"远程版本: {latest_version} (通道: {self.self_update_channel})")
             if self._version_newer_than(current_version, latest_version):
                 self.logger.info(f"检测到新版本: {latest_version}")
                 if self._is_build_tag(current_version):
@@ -154,7 +172,7 @@ class SelfUpdater:
                 if cur_tuple and lat_tuple:
                     self.logger.info("当前版本已最新")
                 else:
-                    self.logger.warning("版本号校验错误，跳过更新")
+                    self.logger.error("版本号校验错误，跳过更新")
                 return False
 
             assets = release_info.get('assets', [])
@@ -173,7 +191,7 @@ class SelfUpdater:
                     break
 
             if not exe_url:
-                self.logger.info(f"未找到 {primary_keyword} 版本，尝试查找 {secondary_keyword} 版本")
+                self.logger.warning(f"未找到 {primary_keyword} 版本，尝试查找 {secondary_keyword} 版本")
                 for asset in assets:
                     asset_name = asset.get('name', '')
                     if secondary_keyword in asset_name and asset_name.endswith('.exe'):
@@ -183,7 +201,7 @@ class SelfUpdater:
                         break
 
             if not exe_url:
-                self.logger.warning("未找到带有 Nuitka 或 PyInstaller 标签的 exe 文件")
+                self.logger.critical("未找到带有 Nuitka 或 PyInstaller 标签的 exe 文件")
                 return False
 
             temp_dir = Path(self.temp_folder)
@@ -219,11 +237,11 @@ class SelfUpdater:
                     continue
 
                 if attempt == max_retries - 1:
-                    self.logger.error("release body 中未找到 SHA256 校验值，已重试 3 次，放弃更新")
+                    self.logger.error("Github API 中未找到 SHA256 校验值，已重试 3 次")
                 # will continue to next attempt
 
             else:
-                self.logger.error("自更新下载校验失败，已达到最大重试次数，跳过更新")
+                self.logger.critical("软件更新下载校验失败，已达到最大重试次数，跳过更新")
                 try:
                     tmp_path.unlink()
                 except Exception:
@@ -236,7 +254,7 @@ class SelfUpdater:
 
             self.logger.info("新版本已下载并校验通过")
             script = self._generate_self_update_script()
-            self.logger.info("程序将在退出后自动替换")
+            self.logger.warning("软件将在退出后自动替换")
 
             subprocess.Popen(
                 ['cmd', '/c', script],
@@ -246,10 +264,10 @@ class SelfUpdater:
             return True
 
         except requests.RequestException as e:
-            self.logger.error(f"获取 GitHub release 信息失败: {e}")
+            self.logger.critical(f"获取 GitHub release 信息失败: {e}")
             return False
         except Exception as e:
-            self.logger.error(f"检查自身更新时出错: {e}")
+            self.logger.critical(f"检查软件更新时出错: {e}")
             return False
 
     def _generate_self_update_script(self) -> str:
@@ -271,12 +289,12 @@ class SelfUpdater:
             f'timeout /t 1 /nobreak >nul\r\n'
             f'tasklist /FI "PID eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul\r\n'
             f'if not errorlevel 1 goto waitloop\r\n'
-            f'echo 正在启动自更新...\r\n'
+            f'echo 正在启动软件更新...\r\n'
             f'start "" /wait "{current_exe}" --self-update\r\n'
             f'del "%~f0"\r\n'
         )
         script_path.write_text(script_content, encoding='gbk')
-        self.logger.debug(f"自更新脚本已生成: {script_path}")
+        self.logger.debug(f"软件更新脚本已生成: {script_path}")
         return str(script_path)
 
     def perform(self, zip_manager=None) -> None:

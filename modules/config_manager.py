@@ -9,6 +9,8 @@ import configparser
 from pathlib import Path
 from typing import List
 
+from modules.config_migration import apply_migrations
+
 
 class ConfigManager:
     """配置管理器，负责配置初始化、加载、验证"""
@@ -17,7 +19,7 @@ class ConfigManager:
         'Paths': {
             'm9a_folders': r'Z:\M9A',
             'temp_folder': r'Z:\Temp\M9A-Update-Assistant',
-            'archive_folder_name': '存档文件夹',
+            'archive_folder_path': '存档文件夹',
         },
         'Logs': {
             'save_enabled': 'false',
@@ -26,23 +28,25 @@ class ConfigManager:
         'GitHub': {
             'repo': 'MAA1999/M9A',
             'proxy': '',
-            'release_version': 'release',
+            'm9a_update_channel': 'release',
         },
         'SelfUpdate': {
             'enabled': 'true',
+            'self_update_channel': 'release',
         },
     }
 
     _COMMENTS = {
         'Paths.m9a_folders': 'M9A 文件夹路径（多个路径用逗号分隔）',
         'Paths.temp_folder': '临时文件夹路径',
-        'Paths.archive_folder_name': '配置存档文件夹名（用于保存更新前的配置）',
+        'Paths.archive_folder_path': '配置存档文件夹路径（保存更新前的配置，若不是完整路径，将自动使用当前工作目录）',
         'Logs.save_enabled': '是否保存日志文件，如遇 BUG 时请打开此选项，以获取更多调试信息',
         'Logs.max_files': '最大日志文件数量（超过此数量的旧日志将被删除）',
         'GitHub.repo': 'GitHub 仓库地址（格式：用户名/仓库名）',
         'GitHub.proxy': '代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080），留空表示不使用代理',
-        'GitHub.release_version': '版本选择\nrelease: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本\nlatest: 使用带有 latest 标签的正式版本',
-        'SelfUpdate.enabled': '是否启用程序自我更新',
+        'GitHub.m9a_update_channel': 'M9A 更新通道\nrelease: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本\nlatest: 使用带有 latest 标签的正式版本',
+        'SelfUpdate.enabled': '是否启用软件更新',
+        'SelfUpdate.self_update_channel': '软件更新通道\nrelease: 使用最新的发布版本，包括 Alpha、Beta 等预发布版本\nlatest: 使用带有 latest 标签的正式版本',
     }
 
     @classmethod
@@ -74,7 +78,7 @@ class ConfigManager:
 
         self.m9a_folders: List[str] = []
         self.temp_folder = ''
-        self.archive_folder_name = '存档文件夹'
+        self.archive_folder_path = '存档文件夹'
         self.cli_zip_pattern = 'M9A-win-x86_64-v*-Lite.zip'
         self.gui_zip_pattern = 'M9A-win-x86_64-v*-Full.zip'
         self.log_max_files = 15
@@ -83,6 +87,7 @@ class ConfigManager:
         self.github_release_version = 'release'
         self.github_proxy = ''
         self.self_update_enabled = True
+        self.self_update_channel = 'release'
 
     def _generate_default_config(self) -> None:
         """生成默认配置文件"""
@@ -90,11 +95,13 @@ class ConfigManager:
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 f.write(default_config)
-            print(f"已生成默认配置文件: {self.config_file}")
-            print("请修改配置文件后重新运行程序。")
+            self.logger.info(f"已生成默认配置文件: {self.config_file}")
+            self.logger.info("请修改配置文件后重新运行程序。")
+            self.logger.info("按任意键退出...")
+            input()
             sys.exit(0)
         except IOError as e:
-            print(f"生成配置文件失败: {e}")
+            self.logger.error(f"生成配置文件失败: {e}")
             sys.exit(1)
 
     def _regenerate_config_file(self) -> None:
@@ -104,7 +111,7 @@ class ConfigManager:
         """
         lines = []
         for section in self.config.sections():
-            if section.upper() == 'DEFAULT':
+            if section.upper() == 'DEFAULT' or section == '__migrations__':
                 continue
             lines.append(f'[{section}]')
             template = self.DEFAULT_SECTIONS.get(section, {})
@@ -196,7 +203,7 @@ class ConfigManager:
                         break
 
         for source_section in list(self.config.sections()):
-            if source_section.upper() == 'DEFAULT':
+            if source_section.upper() == 'DEFAULT' or source_section == '__migrations__':
                 continue
             template = self.DEFAULT_SECTIONS.get(source_section, {})
             for key, val in list(self.config.items(source_section)):
@@ -269,7 +276,7 @@ class ConfigManager:
     def load(self) -> None:
         """加载配置文件"""
         if not os.path.exists(self.config_file):
-            print(f"配置文件 {self.config_file} 不存在，将生成默认配置文件")
+            self.logger.info("配置文件不存在，将生成默认配置文件")
             self._generate_default_config()
 
         for pass_num in range(3):
@@ -286,13 +293,16 @@ class ConfigManager:
                     self._generate_default_config()
                 else:
                     self.logger.critical(f"配置文件无法修复: {e}")
-                    print(f"\n配置文件 {self.config_file} 已损坏且无法自动修复。")
-                    print("请检查文件内容或删除后重新运行程序以生成默认配置。")
-                    print("按任意键退出...")
+                    self.logger.critical(f"配置文件 {self.config_file} 已损坏且无法自动修复。")
+                    self.logger.critical("请检查文件内容或删除后重新运行程序以生成默认配置。")
+                    self.logger.critical("按任意键退出...")
                     input()
                     raise SystemExit(1)
 
-        dirty = False
+        migrated = apply_migrations(self.config, self.logger)
+
+        dirty = migrated
+
 
         for section in self.DEFAULT_SECTIONS:
             if not self.config.has_section(section):
@@ -321,24 +331,25 @@ class ConfigManager:
         self.temp_folder = self._resolve_temp_folder(temp_folder_config)
         self._ensure_temp_folder_exists()
 
-        self.archive_folder_name = self.config.get('Paths', 'archive_folder_name', fallback='存档文件夹').strip()
-        if not self.archive_folder_name:
-            self.archive_folder_name = '存档文件夹'
+        self.archive_folder_path = self.config.get('Paths', 'archive_folder_path', fallback='存档文件夹').strip()
+        if not self.archive_folder_path:
+            self.archive_folder_path = '存档文件夹'
 
         self.log_max_files = self.config.getint('Logs', 'max_files', fallback=15)
         self.log_save_enabled = self.config.getboolean('Logs', 'save_enabled', fallback=True)
 
         self.github_repo = self.config.get('GitHub', 'repo', fallback='MAA1999/M9A')
-        self.github_release_version = self.config.get('GitHub', 'release_version', fallback='release')
+        self.github_release_version = self.config.get('GitHub', 'm9a_update_channel', fallback='release')
         self.github_proxy = self.config.get('GitHub', 'proxy', fallback='').strip()
         self.self_update_enabled = self.config.getboolean('SelfUpdate', 'enabled', fallback=True)
+        self.self_update_channel = self.config.get('SelfUpdate', 'self_update_channel', fallback='release').strip()
 
         if self.github_proxy:
             self.logger.info(f"已配置代理: {self.github_proxy}")
         else:
             self.logger.info("未配置代理，若遇到网络问题请配置代理")
 
-        self.logger.info(f"Release 版本: {self.github_release_version}")
+        self.logger.info(f"M9A 更新通道: {self.github_release_version}")
 
     def validate(self) -> bool:
         """
