@@ -212,16 +212,21 @@ class SelfUpdater:
             tmp_path = temp_dir / "M9A_Update_Assistant_new.exe.tmp"
             sha_path = temp_dir / "M9A_Update_Assistant_new.sha256"
 
-            expected_sha256 = gh_client.get_exe_sha256_from_body(release_info, exe_name)
+            expected_sha256 = gh_client.get_asset_sha256(release_info, exe_name)
+            if not expected_sha256:
+                expected_sha256 = gh_client.get_exe_sha256_from_body(release_info, exe_name)
 
-            if expected_sha256:
-                sha_path.write_text(expected_sha256, encoding='ascii')
-                self.logger.debug(f"已保存 SHA256 校验值: {sha_path}")
+            if not expected_sha256:
+                self.logger.critical("Github API 中未找到 SHA256 校验值，跳过更新")
+                return False
+
+            sha_path.write_text(expected_sha256, encoding='ascii')
+            self.logger.debug(f"已保存 SHA256 校验值: {sha_path}")
 
             max_retries = 3
             for attempt in range(max_retries):
                 if attempt > 0:
-                    self.logger.info(f"重试下载自更新文件（{attempt + 1}/{max_retries}）")
+                    self.logger.info(f"重试下载更新文件（{attempt + 1}/{max_retries}）")
                 else:
                     self.logger.info(f"开始下载: {exe_url}")
 
@@ -229,19 +234,9 @@ class SelfUpdater:
                     self.logger.error("下载失败")
                     continue
 
-                if not expected_sha256:
-                    expected_sha256 = gh_client.get_exe_sha256_from_body(release_info, exe_name)
-
-                if expected_sha256:
-                    if zip_manager.verify_file_sha256(str(tmp_path), expected_sha256):
-                        sha_path.write_text(expected_sha256, encoding='ascii')
-                        break
-                    self.logger.error("SHA256 校验失败，准备重试")
-                    continue
-
-                if attempt == max_retries - 1:
-                    self.logger.error("Github API 中未找到 SHA256 校验值，已重试 3 次")
-                # will continue to next attempt
+                if zip_manager.verify_file_sha256(str(tmp_path), expected_sha256):
+                    break
+                self.logger.error("SHA256 校验失败，准备重试")
 
             else:
                 self.logger.critical("软件更新下载校验失败，已达到最大重试次数，跳过更新")
