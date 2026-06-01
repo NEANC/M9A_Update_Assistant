@@ -52,14 +52,9 @@ class SelfUpdater:
         is_py_script = sys.argv[0].endswith('.py')
         is_bundled = not is_py_script or is_pyinstaller or is_nuitka
 
+        package_type = "Nuitka"
         if is_pyinstaller:
             package_type = "PyInstaller"
-        elif is_nuitka:
-            package_type = "Nuitka"
-        elif is_py_script:
-            package_type = "PythonScript"
-        else:
-            package_type = "UnknownBundled"
 
         logging.getLogger("M9AUpdateAssistant").debug(f"当前运行模式: {package_type}")
         return is_bundled, package_type
