@@ -96,6 +96,7 @@ jobs:
             mv temp_changelog.md CHANGELOG.md
           else
             echo "Skipping changelog for development build"
+          fi
 
       # 上传变更日志
       - name: Upload Changelog
