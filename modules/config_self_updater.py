@@ -92,12 +92,18 @@ class UpdateState:
         return state
 
     def save(self) -> None:
-        """写入更新状态文件"""
+        """写入更新状态文件（原子写入：先写临时文件再替换）"""
+        tmp_path = self._file_path.with_suffix('.ini.tmp')
         try:
-            with open(self._file_path, 'w', encoding='utf-8') as f:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 self._config.write(f)
+            tmp_path.replace(self._file_path)
         except OSError as e:
             logging.getLogger("M9AUpdateAssistant").error(f"写入状态文件失败: {e}")
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def get(self, section: str, key: str, fallback: str = "") -> str:
         """读取状态值"""
