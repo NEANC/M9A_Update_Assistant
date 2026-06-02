@@ -32,7 +32,7 @@ class ConfigManager:
         },
         'SelfUpdate': {
             'enabled': 'true',
-            'self_update_channel': 'preview',
+            'self_update_channel': 'stable',
         },
     }
 
@@ -87,7 +87,7 @@ class ConfigManager:
         self.github_release_version = 'preview'
         self.github_proxy = ''
         self.self_update_enabled = True
-        self.self_update_channel = 'preview'
+        self.self_update_channel = 'stable'
 
     def _generate_default_config(self) -> None:
         """生成默认配置文件"""
