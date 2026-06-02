@@ -243,9 +243,8 @@ class SelfUpdater:
                 return False
 
             self.logger.info("新版本已下载并校验通过")
-            self.logger.warning("软件将在退出后自动替换")
 
-            self._replace_executable(tmp_path, sha_path, zip_manager, latest_version)
+            self._replace_executable(tmp_path, sha_path, latest_version)
             return True
 
         except requests.RequestException as e:
@@ -554,14 +553,13 @@ class SelfUpdater:
         return 0
 
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
-                             zip_manager: ZipManager, new_version: str = "") -> None:
+                             new_version: str = "") -> None:
         """
         准备替换：复制自身为 helper → 写 INI 状态文件 → 启动 helper → 返回
 
         Args:
             tmp_path: 已下载的临时新版本文件
             sha_path: SHA256 校验值文件
-            zip_manager: ZipManager 实例（用于二次校验）
             new_version: 新版本号
         """
         current_exe = self._get_exe_path()
@@ -573,12 +571,6 @@ class SelfUpdater:
         expected = ""
         if sha_path.exists():
             expected = sha_path.read_text(encoding='ascii').strip()
-            self.logger.info("重新校验更新文件完整性...")
-            if not zip_manager.verify_file_sha256(str(tmp_path), expected):
-                self.logger.critical("更新文件校验失败，放弃更新")
-                tmp_path.unlink(missing_ok=True)
-                sha_path.unlink(missing_ok=True)
-                raise RuntimeError("SHA256 校验失败")
 
         shutil.copy2(tmp_path, new_exe)
         self.logger.info(f"新版本已暂存: {new_exe}")
@@ -607,8 +599,7 @@ class SelfUpdater:
 
         state.transition("helper_started")
 
-        self.logger.info("启动更新助手进程...")
-        self.logger.warning("软件将在退出后自动替换")
+        self.logger.info("启动更新进程...")
         subprocess.Popen(
             [str(helper_exe), '--update-helper', '--parent-pid', str(os.getpid())],
             creationflags=subprocess.DETACHED_PROCESS,
