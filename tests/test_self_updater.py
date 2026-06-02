@@ -129,9 +129,19 @@ class TestCheckSelfUpdate(unittest.TestCase):
     """check_self_update 测试"""
 
     def setUp(self):
+        _suppress_logs()
+        self.tmpdir = tempfile.mkdtemp()
+        self.original_argv0 = sys.argv[0]
+        sys.argv[0] = os.path.join(self.tmpdir, "test_app.exe")
+
         self.logger = logging.getLogger("TestSelfUpdate")
         self.logger.setLevel(logging.CRITICAL)
         self.su = SelfUpdater('', '/tmp', self.logger)
+
+    def tearDown(self):
+        sys.argv[0] = self.original_argv0
+        _cleanup_state_file()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_source_mode_skips(self):
         """源码模式下跳过"""
