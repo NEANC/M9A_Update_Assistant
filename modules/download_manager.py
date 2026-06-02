@@ -6,7 +6,6 @@ import time
 import requests
 
 from pathlib import Path
-from typing import Any, Dict, Optional
 
 
 class DownloadManager:
