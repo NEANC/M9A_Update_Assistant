@@ -115,6 +115,19 @@ class TestVersionToTuple(unittest.TestCase):
         self.assertTrue(su._version_newer_than('v1.10.1-9-build.gb6da5ee', 'v1.11.0'))
         self.assertFalse(su._version_newer_than('v1.11.0', 'v1.10.1-9-build.gb6da5ee'))
 
+    def test_version_newer_than_prerelease_without_dot(self):
+        """无点号预发布数字比较：beta → beta1 → beta2"""
+        su = SelfUpdater('', '', None)
+        self.assertTrue(su._version_newer_than('v1.13.0-beta', 'v1.13.0-beta1'))
+        self.assertTrue(su._version_newer_than('v1.13.0-beta1', 'v1.13.0-beta2'))
+        self.assertFalse(su._version_newer_than('v1.13.0-beta2', 'v1.13.0-beta1'))
+
+    def test_version_newer_than_prerelease_with_dot(self):
+        """带点号预发布数字比较：beta.1 → beta.2"""
+        su = SelfUpdater('', '', None)
+        self.assertTrue(su._version_newer_than('v1.13.0-beta.1', 'v1.13.0-beta.2'))
+        self.assertFalse(su._version_newer_than('v1.13.0-beta.2', 'v1.13.0-beta.1'))
+
     def test_is_build_tag(self):
         """构建标签检测"""
         self.assertTrue(SelfUpdater._is_build_tag('v0.0.1-build.gb6da5ee'))

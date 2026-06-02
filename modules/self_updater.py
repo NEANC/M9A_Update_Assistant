@@ -117,7 +117,7 @@ class SelfUpdater:
     def _prerelease_weight(v: str) -> Tuple[int, int]:
         """返回预发布权重：alpha=(1, N), beta=(2, N), rc=(3, N)，缺数字时 N=0"""
         WEIGHT_MAP = {'alpha': 1, 'beta': 2, 'rc': 3}
-        match = re.search(r'-(alpha|beta|rc)(?:\.(\d+))?', v)
+        match = re.search(r'-(alpha|beta|rc)(?:\.?(\d+))?', v)
         if not match:
             return (0, 0)
         kind = match.group(1)
