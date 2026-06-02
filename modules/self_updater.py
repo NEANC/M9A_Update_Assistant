@@ -212,7 +212,8 @@ class SelfUpdater:
 
     def check_self_update(self, current_version: str, gh_client: GitHubReleaseClient,
                            download_manager: DownloadManager,
-                           zip_manager: ZipManager) -> bool:
+                           zip_manager: ZipManager,
+                           force: bool = False) -> bool:
         """
         检查并准备自身更新
 
@@ -253,7 +254,7 @@ class SelfUpdater:
                 return False
 
             self.logger.debug(f"远程版本: {latest_version} (通道: {channel})")
-            if self._is_build_tag(current_version):
+            if not force and self._is_build_tag(current_version):
                 self.logger.info("当前为 Build 版本，跳过更新")
                 return False
 

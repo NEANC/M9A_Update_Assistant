@@ -494,13 +494,13 @@ class M9AUpdateAssistant:
 
         return all_success
 
-    def check_self_update(self) -> bool:
+    def check_self_update(self, force: bool = False) -> bool:
         """检查自身更新"""
         if not self.config.self_update_enabled:
             self.logger.info("已禁用软件更新")
             return False
         return self._self_update.check_self_update(
-            VERSION, self._github, self._download, self._zip,
+            VERSION, self._github, self._download, self._zip, force=force,
         )
 
 
@@ -595,8 +595,11 @@ def main():
     # ── 仅检查自身更新模式 ──
     if any(flag in sys.argv for flag in ('-U', '--update', '--Update')):
         print_info()
+        force = '-f' in sys.argv
         assistant = M9AUpdateAssistant()
-        if assistant.check_self_update():
+        if assistant.check_self_update(force=force):
+            if force:
+                assistant.logger.info("强制执行 Build 版本更新")
             assistant.logger.info("已将新版本下载到临时文件夹，即将退出以完成更新...")
             sys.exit(0)
         else:
