@@ -621,7 +621,7 @@ class SelfUpdater:
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
 
-        deadline = time.time() + 5
+        deadline = time.time() + 15
         while time.time() < deadline:
             if lock_file.exists():
                 return
@@ -635,7 +635,7 @@ class SelfUpdater:
             proc.kill()
         except Exception:
             pass
-        raise RuntimeError("启动更新脚本失败：helper.ps1 未在 5 秒内就绪")
+        raise RuntimeError("启动更新脚本失败：helper.ps1 未在 15 秒内就绪")
 
     @staticmethod
     def self_update_verify() -> int:
