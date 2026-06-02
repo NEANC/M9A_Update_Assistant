@@ -514,10 +514,17 @@ def _cleanup_update_residue(logger: logging.Logger) -> None:
 
     if current_state == "verified":
         logger.info("清理上次更新残留文件...")
-        helper_file = Path(state["helper_file"])
         backup_file = Path(state["backup_file"])
+        script_dir = Path(state["target"]).parent
 
-        for f in [helper_file, backup_file]:
+        cleanup_files = [
+            backup_file,
+            script_dir / "M9A_Update_Assistant_Update_Helper.ps1",
+            script_dir / "M9A_Update_Assistant_Update.ps1",
+            script_dir / "update_started.lock",
+            script_dir / "update.log",
+        ]
+        for f in cleanup_files:
             try:
                 if f.exists():
                     f.unlink()
@@ -548,19 +555,6 @@ def _cleanup_update_residue(logger: logging.Logger) -> None:
 
 def main():
     """主函数"""
-
-    # ── helper 模式 ──
-    if '--update-helper' in sys.argv:
-        try:
-            parent_pid_index = sys.argv.index('--parent-pid')
-            parent_pid = int(sys.argv[parent_pid_index + 1])
-        except (ValueError, IndexError):
-            logger = logging.getLogger("M9AUpdateAssistant")
-            logger.critical("--update-helper 缺少 --parent-pid 参数")
-            sys.exit(1)
-
-        SelfUpdater.helper_main(parent_pid)
-        return
 
     # ── 新版验证模式 ──
     if '--self-update-verify' in sys.argv:

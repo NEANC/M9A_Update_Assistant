@@ -18,6 +18,14 @@ from modules.self_updater import SelfUpdater, _get_existing_retry_count
 from M9A_Update_Assistant import _cleanup_update_residue
 
 
+class TestGetExePath(unittest.TestCase):
+    """_get_exe_path 测试"""
+
+    def test_returns_path(self):
+        path = SelfUpdater._get_exe_path()
+        self.assertIsInstance(path, Path)
+
+
 class TestDetectPackageType(unittest.TestCase):
     """detect_package_type 静态方法测试"""
 
@@ -428,127 +436,6 @@ class TestMatchAsset(unittest.TestCase):
         self.assertEqual(url, '')
 
 
-class TestBackupAndReplace(unittest.TestCase):
-    """_backup_and_replace 静态方法测试"""
-
-    def setUp(self):
-        _suppress_logs()
-        self.tmpdir = tempfile.mkdtemp()
-        self.original_argv0 = sys.argv[0]
-        sys.argv[0] = os.path.join(self.tmpdir, "test_app.exe")
-
-    def tearDown(self):
-        sys.argv[0] = self.original_argv0
-        _cleanup_state_file()
-        shutil.rmtree(self.tmpdir, ignore_errors=True)
-
-    def test_successful_replace(self):
-        """成功替换"""
-        target = os.path.join(self.tmpdir, "app.exe")
-        new_file = os.path.join(self.tmpdir, "app.new.exe")
-        backup_file = os.path.join(self.tmpdir, "app.backup.exe")
-
-        Path(target).write_text("old version")
-        Path(new_file).write_text("new version")
-
-        state = UpdateState()
-        state["target"] = target
-        state["new_file"] = new_file
-        state["backup_file"] = backup_file
-        state.save()
-
-        result = SelfUpdater._backup_and_replace(state)
-        self.assertTrue(result)
-        self.assertTrue(os.path.exists(backup_file))
-        with open(backup_file, 'r') as f:
-            self.assertEqual(f.read(), "old version")
-        with open(target, 'r') as f:
-            self.assertEqual(f.read(), "new version")
-        self.assertFalse(os.path.exists(new_file))
-
-    def test_new_file_missing(self):
-        """新版本文件不存在"""
-        target = os.path.join(self.tmpdir, "app.exe")
-        new_file = os.path.join(self.tmpdir, "app.new.exe")
-        backup_file = os.path.join(self.tmpdir, "app.backup.exe")
-
-        Path(target).write_text("old version")
-
-        state = UpdateState()
-        state["target"] = target
-        state["new_file"] = new_file
-        state["backup_file"] = backup_file
-        state.save()
-
-        result = SelfUpdater._backup_and_replace(state)
-        self.assertFalse(result)
-        self.assertTrue(os.path.exists(target))
-        self.assertFalse(os.path.exists(new_file))
-
-
-class TestRestoreFromBackup(unittest.TestCase):
-    """_restore_from_backup 静态方法测试"""
-
-    def setUp(self):
-        _suppress_logs()
-        self.tmpdir = tempfile.mkdtemp()
-        self.original_argv0 = sys.argv[0]
-        sys.argv[0] = os.path.join(self.tmpdir, "test_app.exe")
-
-    def tearDown(self):
-        sys.argv[0] = self.original_argv0
-        _cleanup_state_file()
-        shutil.rmtree(self.tmpdir, ignore_errors=True)
-
-    def test_restore_overwrites_bad_new(self):
-        """恢复时覆盖损坏的新版"""
-        target = os.path.join(self.tmpdir, "app.exe")
-        backup_file = os.path.join(self.tmpdir, "app.backup.exe")
-
-        Path(target).write_text("corrupted new version")
-        Path(backup_file).write_text("original old version")
-
-        state = UpdateState()
-        state["target"] = target
-        state["backup_file"] = backup_file
-        state.save()
-
-        result = SelfUpdater._restore_from_backup(state)
-        self.assertTrue(result)
-        with open(target, 'r') as f:
-            self.assertEqual(f.read(), "original old version")
-        self.assertFalse(os.path.exists(backup_file))
-
-    def test_restore_no_target_ok(self):
-        """目标不存在也能恢复"""
-        target = os.path.join(self.tmpdir, "app.exe")
-        backup_file = os.path.join(self.tmpdir, "app.backup.exe")
-
-        Path(backup_file).write_text("old version content")
-
-        state = UpdateState()
-        state["target"] = target
-        state["backup_file"] = backup_file
-        state.save()
-
-        result = SelfUpdater._restore_from_backup(state)
-        self.assertTrue(result)
-        with open(target, 'r') as f:
-            self.assertEqual(f.read(), "old version content")
-
-    def test_restore_no_backup_fails(self):
-        """无备份文件时失败"""
-        target = os.path.join(self.tmpdir, "app.exe")
-
-        state = UpdateState()
-        state["target"] = target
-        state["backup_file"] = os.path.join(self.tmpdir, "nonexistent.exe")
-        state.save()
-
-        result = SelfUpdater._restore_from_backup(state)
-        self.assertFalse(result)
-
-
 class TestSelfUpdateVerify(unittest.TestCase):
     """self_update_verify 静态方法测试"""
 
@@ -576,7 +463,7 @@ class TestSelfUpdateVerify(unittest.TestCase):
         mock_exe_path.return_value = Path(exe_path)
 
         state = UpdateState()
-        state["expected_sha256"] = "0000000000000000000000000000000000000000000000000000000000000000"
+        state["new_sha256"] = "0000000000000000000000000000000000000000000000000000000000000000"
         state["new_version"] = "v9.9.9"
         state.save()
 
@@ -595,7 +482,7 @@ class TestSelfUpdateVerify(unittest.TestCase):
         actual_sha = ZipManager.calculate_sha256(exe_path)
 
         state = UpdateState()
-        state["expected_sha256"] = actual_sha
+        state["new_sha256"] = actual_sha
         state["new_version"] = "v9.9.9"
         state.save()
 
@@ -615,7 +502,7 @@ class TestSelfUpdateVerify(unittest.TestCase):
         actual_sha = ZipManager.calculate_sha256(exe_path)
 
         state = UpdateState()
-        state["expected_sha256"] = actual_sha
+        state["new_sha256"] = actual_sha
         state["new_version"] = app_module.VERSION
         state.save()
 
@@ -665,19 +552,16 @@ class TestCleanupUpdateResidue(unittest.TestCase):
 
     def test_verified_cleans_residue(self):
         """verified 状态 → 清理残留文件 + 删除状态文件"""
-        helper = os.path.join(self.tmpdir, "app.old.exe")
         backup = os.path.join(self.tmpdir, "app.backup.exe")
-        Path(helper).write_text("helper")
         Path(backup).write_text("backup")
 
         state = UpdateState()
         state["state"] = "verified"
-        state["helper_file"] = helper
         state["backup_file"] = backup
+        state["target"] = os.path.join(self.tmpdir, "app.exe")
         state.save()
 
         _cleanup_update_residue(self.logger)
-        self.assertFalse(os.path.exists(helper))
         self.assertFalse(os.path.exists(backup))
         self.assertIsNone(UpdateState.load())
 
