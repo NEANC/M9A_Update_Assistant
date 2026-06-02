@@ -18,6 +18,14 @@ from modules.github_release_client import GitHubReleaseClient
 from modules.zip_manager import ZipManager
 
 
+def _get_existing_retry_count() -> str:
+    """读取已存在的 update_state.ini 中的 retry_count，若无则返回 '0'"""
+    existing = UpdateState.load()
+    if existing:
+        return existing.get("Retry", "retry_count", fallback="0")
+    return "0"
+
+
 class SelfUpdater:
     """自更新器，负责自我更新检查、下载、替换、回滚"""
 
@@ -139,6 +147,12 @@ class SelfUpdater:
             bool: 是否需要退出以完成更新
         """
         self.logger.info("开始检查软件版本...")
+
+        existing_state = UpdateState.load()
+        if existing_state and existing_state.get("State", "state", fallback="") == "failed_disabled":
+            failed_ver = existing_state["new_version"]
+            self.logger.info(f"版本 {failed_ver} 之前验证失败，跳过自动更新")
+            return False
 
         is_bundled, package_type = self.detect_package_type()
         if not is_bundled:
@@ -443,7 +457,13 @@ class SelfUpdater:
         logger = logging.getLogger("M9AUpdateAssistant")
         logger.info("更新助手已启动，等待主进程退出...")
 
-        SelfUpdater._wait_for_parent_exit(parent_pid)
+        if not SelfUpdater._wait_for_parent_exit(parent_pid):
+            logger.critical("等待主进程退出超时，放弃更新")
+            state = UpdateState.load()
+            if state:
+                state["last_error"] = "等待主进程退出超时"
+                state.transition("failed_disabled")
+            sys.exit(1)
 
         state = UpdateState.load()
         if not state:
@@ -530,13 +550,6 @@ class SelfUpdater:
             logger.critical(f"核心模块导入失败: {e}")
             return 4
 
-        try:
-            cfg = ConfigManager("config.ini", logger)
-            cfg.load()
-        except Exception as e:
-            logger.critical(f"配置读取失败: {e}")
-            return 5
-
         logger.info("新版验证全部通过")
         return 0
 
@@ -588,7 +601,7 @@ class SelfUpdater:
         state["old_version"] = old_version
         state["new_version"] = new_version
         state["expected_sha256"] = expected
-        state.set("Retry", "retry_count", "0")
+        state.set("Retry", "retry_count", _get_existing_retry_count())
         state.set("Retry", "max_retry", "3")
         state.save()
 

@@ -525,6 +525,15 @@ def _cleanup_update_residue(logger: logging.Logger) -> None:
             logger.info("已从备份恢复")
         state.delete()
 
+    elif current_state == "rollback_done":
+        logger.info("检测到上次更新回滚完成，清理状态文件")
+        state.delete()
+
+    elif current_state == "failed_disabled":
+        failed_ver = state["new_version"]
+        logger.warning(f"自更新已禁用：版本 {failed_ver} 多次验证失败")
+        logger.warning(f"将跳过版本 {failed_ver} 的自动更新，等待远端发布新版本")
+
 
 def main():
     """主函数"""
@@ -546,6 +555,33 @@ def main():
     if '--self-update-verify' in sys.argv:
         exit_code = SelfUpdater.self_update_verify()
         sys.exit(exit_code)
+
+    # ── 重试更新模式 ──
+    if '--retry-update' in sys.argv:
+        logger = logging.getLogger("M9AUpdateAssistant")
+        logger.info("正在重试自更新...")
+        assistant = M9AUpdateAssistant()
+        need_exit = assistant.check_self_update()
+        if need_exit:
+            sys.exit(0)
+        logger.error("重试更新失败，无法获取新版本")
+        return
+
+    # ── 更新失败模式 ──
+    if '--update-failed' in sys.argv:
+        print_info()
+        logger = logging.getLogger("M9AUpdateAssistant")
+        state = UpdateState.load()
+        if state:
+            failed_ver = state["new_version"]
+            logger.critical(f"自更新失败：版本 {failed_ver} 多次验证不通过")
+            print(f"\n软件自动更新失败，版本 {failed_ver} 已被标记为不可用。")
+            print("当前版本可继续使用，后续将跳过此版本的自动更新。")
+        else:
+            logger.critical("自更新失败，但无法读取状态信息")
+        print(f"\n按任意键退出...")
+        input()
+        return
 
     # ── 正常启动：清理上次更新残留 ──
     _cleanup_update_residue(logging.getLogger("M9AUpdateAssistant"))
