@@ -371,7 +371,6 @@ class SelfUpdater:
             #>
             param([int]$ParentPid)
 
-            $ErrorActionPreference = "Stop"
             $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
             $stateFile = Join-Path $scriptDir "update_state.ini"
             $lockFile  = Join-Path $scriptDir "update_started.lock"
@@ -379,75 +378,109 @@ class SelfUpdater:
             $updatePs1 = Join-Path $scriptDir "M9A_Update_Assistant_Update.ps1"
 
             function Write-Log($msg) {
-                $line = "$(Get-Date -Format o) $msg"
-                Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
+                try {
+                    $line = "$(Get-Date -Format o) $msg"
+                    Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
+                } catch {}
             }
 
             function Read-IniValue($section, $key) {
-                $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8
-                $sectionEsc = [regex]::Escape("[$section]")
-                $keyEsc = [regex]::Escape($key)
-                $pattern = "(?ms)^$sectionEsc.*?^$keyEsc\s*=\s*(.*?)\s*$"
-                if ($content -match $pattern) { return $matches[1] }
+                try {
+                    $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
+                    $sectionEsc = [regex]::Escape("[$section]")
+                    $keyEsc = [regex]::Escape($key)
+                    $pattern = "(?ms)^$sectionEsc(?:(?!^\Q[\E).)*^$keyEsc\s*=\s*(.*?)\s*$"
+                    if ($content -match $pattern) { return $matches[1] }
+                } catch {}
                 return ""
             }
 
             function Write-IniValue($section, $key, $value) {
-                $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8
-                $sectionEsc = [regex]::Escape("[$section]")
-                $keyEsc = [regex]::Escape($key)
-                $pattern = "(?ms)(^$sectionEsc.*?^$keyEsc\s*=\s*).*?(\s*$)"
-                $newContent = $content -replace $pattern, "`${1}$value`${2}"
-                $tmp = "$stateFile.tmp"
-                $newContent | Set-Content -LiteralPath $tmp -Encoding UTF8
-                Move-Item -LiteralPath $tmp -Destination $stateFile -Force
+                try {
+                    $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
+                    $sectionEsc = [regex]::Escape("[$section]")
+                    $keyEsc = [regex]::Escape($key)
+                    $sectionPattern = "(?ms)^$sectionEsc(?:(?!^\Q[\E).)*"
+                    $keyPattern = "^$keyEsc\s*=\s*.*?(\s*$)"
+                    $fullPattern = "($sectionPattern$keyPattern)"
+                    if ($content -match $fullPattern) {
+                        $newContent = $content -replace $fullPattern, "`${1}$value`${2}"
+                    } else {
+                        $newContent = "$content`r`n$key = $value"
+                    }
+                    $tmp = "$stateFile.tmp"
+                    $newContent | Set-Content -LiteralPath $tmp -Encoding UTF8
+                    Move-Item -LiteralPath $tmp -Destination $stateFile -Force
+                } catch {
+                    Write-Log "Write-IniValue failed: $($_.Exception.Message)"
+                }
+            }
+
+            function Get-RetryOrDefault($name, $default) {
+                $val = Read-IniValue "Retry" $name
+                if ($val -match '^\d+$') { return [int]$val }
+                return $default
             }
 
             function Restore-Backup($reason) {
                 Write-Log "rollback: $reason"
                 try {
-                    $target  = Read-IniValue "Files" "target"
-                    $backup  = Read-IniValue "Files" "backup_file"
-                    $newFile = Read-IniValue "Files" "new_file"
+                    $target = Read-IniValue "Files" "target"
+                    $backup = Read-IniValue "Files" "backup_file"
+
+                    if (!(Test-Path -LiteralPath $backup)) {
+                        Write-IniValue "State" "state" "failed_disabled"
+                        Write-IniValue "State" "last_error" "backup not found: $backup"
+                        exit 2
+                    }
 
                     if (Test-Path -LiteralPath $target) {
-                        Remove-Item -LiteralPath $target -Force
+                        Remove-Item -LiteralPath $target -Force -ErrorAction Stop
                     }
-                    if (Test-Path -LiteralPath $backup) {
-                        Move-Item -LiteralPath $backup -Destination $target -Force
-                        Write-IniValue "State" "state" "rollback_done"
-                        Write-IniValue "State" "last_error" $reason
+                    Move-Item -LiteralPath $backup -Destination $target -Force -ErrorAction Stop
+                    Write-IniValue "State" "state" "rollback_done"
+                    Write-IniValue "State" "last_error" $reason
 
-                        $retry = [int](Read-IniValue "Retry" "retry_count")
-                        $max   = [int](Read-IniValue "Retry" "max_retry")
-                        $retry++
-                        Write-IniValue "Retry" "retry_count" "$retry"
+                    $retry = Get-RetryOrDefault "retry_count" 0
+                    $max   = Get-RetryOrDefault "max_retry" 3
+                    $retry++
+                    Write-IniValue "Retry" "retry_count" "$retry"
 
-                        if ($retry -lt $max) {
-                            Start-Process -FilePath $target -ArgumentList "--retry-update"
-                        } else {
-                            Write-IniValue "State" "state" "failed_disabled"
-                            Start-Process -FilePath $target -ArgumentList "--update-failed"
-                        }
-                        exit 1
+                    if ($retry -lt $max) {
+                        Start-Process -FilePath $target -ArgumentList "--retry-update"
+                    } else {
+                        Write-IniValue "State" "state" "failed_disabled"
+                        Start-Process -FilePath $target -ArgumentList "--update-failed"
                     }
-                    Write-IniValue "State" "state" "failed_disabled"
-                    Write-IniValue "State" "last_error" "backup not found: $backup"
-                    exit 2
+                    exit 1
                 } catch {
+                    Write-Log "Restore-Backup failed: $($_.Exception.Message)"
                     Write-IniValue "State" "state" "failed_disabled"
                     Write-IniValue "State" "last_error" $_.Exception.Message
                     exit 3
                 }
             }
 
+            function Start-ProcWait($filePath, $argList, $timeoutSec) {
+                $psi = New-Object System.Diagnostics.ProcessStartInfo
+                $psi.FileName = $filePath
+                $psi.Arguments = $argList
+                $psi.UseShellExecute = $false
+                $proc = [System.Diagnostics.Process]::Start($psi)
+                if ($proc.WaitForExit($timeoutSec * 1000)) {
+                    return $proc.ExitCode
+                }
+                try { $proc.Kill() } catch {}
+                return -1
+            }
+
             try {
-                New-Item -LiteralPath $lockFile -ItemType File -Force | Out-Null
+                New-Item -LiteralPath $lockFile -ItemType File -Force -ErrorAction Stop | Out-Null
                 Write-IniValue "State" "state" "helper_started"
                 Write-Log "helper started"
 
                 if ($ParentPid -gt 0) {
-                    try { Wait-Process -Id $ParentPid -Timeout 60 }
+                    try { Wait-Process -Id $ParentPid -Timeout 60 -ErrorAction Stop }
                     catch {
                         $p = Get-Process -Id $ParentPid -ErrorAction SilentlyContinue
                         if ($p) { throw "parent still alive: $ParentPid" }
@@ -457,13 +490,10 @@ class SelfUpdater:
                 Write-IniValue "State" "state" "replacing"
                 Write-Log "running update.ps1"
 
-                $updateProc = Start-Process -FilePath "powershell.exe" -ArgumentList @(
-                    "-NoProfile", "-ExecutionPolicy", "Bypass",
-                    "-File", $updatePs1
-                ) -Wait -PassThru
-
-                if ($updateProc.ExitCode -ne 0) {
-                    Restore-Backup "update.ps1 failed: $($updateProc.ExitCode)"
+                $updateArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $updatePs1
+                $updateCode = Start-ProcWait "powershell.exe" $updateArgs 120
+                if ($updateCode -ne 0) {
+                    Restore-Backup "update.ps1 failed: exit $updateCode"
                 }
 
                 $target    = Read-IniValue "Files" "target"
@@ -477,14 +507,10 @@ class SelfUpdater:
                 Write-Log "starting new exe verify"
 
                 $newVersion = Read-IniValue "Version" "new_version"
-                $verifyProc = Start-Process -FilePath $target -ArgumentList @(
-                    "--self-update-verify",
-                    "--expected-sha256", $newSha256,
-                    "--expected-version", $newVersion
-                ) -Wait -PassThru
-
-                if ($verifyProc.ExitCode -ne 0) {
-                    Restore-Backup "verify failed: $($verifyProc.ExitCode)"
+                $verifyArgs = '--self-update-verify --expected-sha256 "{0}" --expected-version "{1}"' -f $newSha256, $newVersion
+                $verifyCode = Start-ProcWait $target $verifyArgs 60
+                if ($verifyCode -ne 0) {
+                    Restore-Backup "verify failed: exit $verifyCode"
                 }
 
                 Write-IniValue "State" "state" "verified"
@@ -492,6 +518,7 @@ class SelfUpdater:
                 Start-Process -FilePath $target
                 exit 0
             } catch {
+                Write-Log "helper error: $($_.Exception.Message)"
                 Restore-Backup $_.Exception.Message
             }
         """).lstrip("\n")
@@ -521,11 +548,13 @@ class SelfUpdater:
             $stateFile = Join-Path $scriptDir "update_state.ini"
 
             function Read-IniValue($section, $key) {
-                $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8
-                $sectionEsc = [regex]::Escape("[$section]")
-                $keyEsc = [regex]::Escape($key)
-                $pattern = "(?ms)^$sectionEsc.*?^$keyEsc\s*=\s*(.*?)\s*$"
-                if ($content -match $pattern) { return $matches[1] }
+                try {
+                    $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
+                    $sectionEsc = [regex]::Escape("[$section]")
+                    $keyEsc = [regex]::Escape($key)
+                    $pattern = "(?ms)^$sectionEsc(?:(?!^\Q[\E).)*^$keyEsc\s*=\s*(.*?)\s*$"
+                    if ($content -match $pattern) { return $matches[1] }
+                } catch {}
                 return ""
             }
 
