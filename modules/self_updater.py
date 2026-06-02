@@ -395,8 +395,11 @@ class SelfUpdater:
             param([int]$ParentPid)
 
             $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-            $stateFile = Join-Path $scriptDir "update_state.ini"
             $lockFile  = Join-Path $scriptDir "update_started.lock"
+
+            try { New-Item -Path $lockFile -ItemType File -Force | Out-Null } catch {}
+
+            $stateFile = Join-Path $scriptDir "update_state.ini"
             $logFile   = Join-Path $scriptDir "update.log"
             $updatePs1 = Join-Path $scriptDir "M9A_Update_Assistant_Update.ps1"
 
@@ -412,7 +415,7 @@ class SelfUpdater:
                     $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
                     $sectionEsc = [regex]::Escape("[$section]")
                     $keyEsc = [regex]::Escape($key)
-                    $pattern = "(?ms)^$sectionEsc(?:(?!^\Q[\E).)*^$keyEsc\s*=\s*(.*?)\s*$"
+                    $pattern = "(?ms)^$sectionEsc(?:(?!^\[).)*^$keyEsc\s*=\s*(.*?)\s*$"
                     if ($content -match $pattern) { return $matches[1] }
                 } catch {}
                 return ""
@@ -423,7 +426,7 @@ class SelfUpdater:
                     $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
                     $sectionEsc = [regex]::Escape("[$section]")
                     $keyEsc = [regex]::Escape($key)
-                    $sectionPattern = "(?ms)^$sectionEsc(?:(?!^\Q[\E).)*"
+                    $sectionPattern = "(?ms)^$sectionEsc(?:(?!^\[).)*"
                     $keyPattern = "^$keyEsc\s*=\s*.*?(\s*$)"
                     $fullPattern = "($sectionPattern$keyPattern)"
                     if ($content -match $fullPattern) {
@@ -498,7 +501,6 @@ class SelfUpdater:
             }
 
             try {
-                New-Item -LiteralPath $lockFile -ItemType File -Force -ErrorAction Stop | Out-Null
                 Write-IniValue "State" "state" "helper_started"
                 Write-Log "helper started"
 
@@ -521,9 +523,11 @@ class SelfUpdater:
 
                 $target    = Read-IniValue "Files" "target"
                 $newSha256 = Read-IniValue "Version" "new_sha256"
-                $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash.ToLowerInvariant()
-                if ($actual -ne $newSha256.ToLowerInvariant()) {
-                    Restore-Backup "target hash mismatch after replace"
+                if ($newSha256) {
+                    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash.ToLowerInvariant()
+                    if ($actual -ne $newSha256.ToLowerInvariant()) {
+                        Restore-Backup "target hash mismatch after replace"
+                    }
                 }
 
                 Write-IniValue "State" "state" "pending_new_verify"
@@ -566,7 +570,6 @@ class SelfUpdater:
                 不做 SHA256 校验，校验由 helper.ps1 负责
             #>
 
-            $ErrorActionPreference = "Stop"
             $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
             $stateFile = Join-Path $scriptDir "update_state.ini"
 
@@ -575,7 +578,7 @@ class SelfUpdater:
                     $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
                     $sectionEsc = [regex]::Escape("[$section]")
                     $keyEsc = [regex]::Escape($key)
-                    $pattern = "(?ms)^$sectionEsc(?:(?!^\Q[\E).)*^$keyEsc\s*=\s*(.*?)\s*$"
+                    $pattern = "(?ms)^$sectionEsc(?:(?!^\[).)*^$keyEsc\s*=\s*(.*?)\s*$"
                     if ($content -match $pattern) { return $matches[1] }
                 } catch {}
                 return ""
@@ -591,9 +594,11 @@ class SelfUpdater:
                     throw "new file not found: $newFile"
                 }
 
-                $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $newFile).Hash.ToLowerInvariant()
-                if ($actual -ne $newSha256.ToLowerInvariant()) {
-                    throw "new file SHA256 mismatch: expected $newSha256, got $actual"
+                if ($newSha256) {
+                    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $newFile).Hash.ToLowerInvariant()
+                    if ($actual -ne $newSha256.ToLowerInvariant()) {
+                        throw "new file SHA256 mismatch: expected $newSha256, got $actual"
+                    }
                 }
 
                 if (Test-Path -LiteralPath $backup) {
@@ -670,7 +675,7 @@ class SelfUpdater:
                 "-File", str(base_dir / "M9A_Update_Assistant_Update_Helper.ps1"),
                 "-ParentPid", str(os.getpid()),
             ],
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
         )
 
         deadline = time.time() + 15
