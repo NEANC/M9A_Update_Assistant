@@ -23,7 +23,7 @@ class ConfigManager:
         },
         'Logs': {
             'save_enabled': 'false',
-            'max_files': '15',
+            'max_files': '5',
         },
         'GitHub': {
             'repo': 'MAA1999/M9A',
@@ -81,7 +81,7 @@ class ConfigManager:
         self.archive_folder_path = '存档文件夹'
         self.cli_zip_pattern = 'M9A-win-x86_64-v*-Lite.zip'
         self.gui_zip_pattern = 'M9A-win-x86_64-v*-Full.zip'
-        self.log_max_files = 15
+        self.log_max_files = 5
         self.log_save_enabled = False
         self.github_repo = 'MAA1999/M9A'
         self.github_release_version = 'preview'
@@ -353,7 +353,7 @@ class ConfigManager:
         if not self.archive_folder_path:
             self.archive_folder_path = '存档文件夹'
 
-        self.log_max_files = self.config.getint('Logs', 'max_files', fallback=15)
+        self.log_max_files = self.config.getint('Logs', 'max_files', fallback=5)
         self.log_save_enabled = self.config.getboolean('Logs', 'save_enabled', fallback=True)
 
         self.github_repo = self.config.get('GitHub', 'repo', fallback='MAA1999/M9A')
