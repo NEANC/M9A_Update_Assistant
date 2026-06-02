@@ -3,13 +3,17 @@
 
 import logging
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater
 
 
@@ -221,10 +225,319 @@ class TestCheckSelfUpdate(unittest.TestCase):
 class TestRollback(unittest.TestCase):
     """rollback 静态方法测试"""
 
-    def test_no_backup(self):
-        """无 .bak 文件"""
-        # 不应抛出异常
-        SelfUpdater.rollback()
+    def setUp(self):
+        _suppress_logs()
+        self.tmpdir = tempfile.mkdtemp()
+        self.original_argv0 = sys.argv[0]
+        sys.argv[0] = os.path.join(self.tmpdir, "test_app.exe")
+
+    def tearDown(self):
+        sys.argv[0] = self.original_argv0
+        _cleanup_state_file()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_no_state_file(self):
+        """无状态文件时返回 False，不抛异常"""
+        result = SelfUpdater.rollback()
+        self.assertFalse(result)
+
+    def test_no_backup_file(self):
+        """状态文件存在但备份文件不存在"""
+        state = UpdateState()
+        state["target"] = os.path.join(self.tmpdir, "app.exe")
+        state["backup_file"] = os.path.join(self.tmpdir, "nonexistent_backup.exe")
+        state.save()
+
+        result = SelfUpdater.rollback()
+        self.assertFalse(result)
+
+    def test_successful_rollback(self):
+        """成功从备份恢复"""
+        target = os.path.join(self.tmpdir, "app.exe")
+        backup = os.path.join(self.tmpdir, "app.backup.exe")
+
+        # 创建备份文件
+        Path(backup).write_text("old version content")
+
+        state = UpdateState()
+        state["target"] = target
+        state["backup_file"] = backup
+        state.save()
+
+        result = SelfUpdater.rollback()
+        self.assertTrue(result)
+        self.assertTrue(os.path.exists(target))
+        with open(target, 'r') as f:
+            self.assertEqual(f.read(), "old version content")
+        self.assertFalse(os.path.exists(backup))
+
+
+class TestMatchAsset(unittest.TestCase):
+    """_match_asset 测试"""
+
+    def setUp(self):
+        _suppress_logs()
+        self.su = SelfUpdater('', '/tmp', logging.getLogger("TestSelfUpdate"))
+
+    def _make_release(self, assets):
+        return {'assets': assets}
+
+    def test_match_nuitka_primary(self):
+        """首选 Nuitka 版本"""
+        release = self._make_release([
+            {
+                'name': 'M9A_Update_Assistant-Nuitka-v1.11.0.exe',
+                'browser_download_url': 'https://url/nuitka',
+            },
+            {
+                'name': 'M9A_Update_Assistant-PyInstaller-v1.11.0.exe',
+                'browser_download_url': 'https://url/pyinstaller',
+            },
+        ])
+        url, name = self.su._match_asset(release, 'Nuitka')
+        self.assertEqual(url, 'https://url/nuitka')
+        self.assertIn('Nuitka', name)
+
+    def test_fallback_to_pyinstaller(self):
+        """Nuitka 不存在时回退到 PyInstaller"""
+        release = self._make_release([
+            {
+                'name': 'M9A_Update_Assistant-PyInstaller-v1.11.0.exe',
+                'browser_download_url': 'https://url/pyinstaller',
+            },
+        ])
+        url, name = self.su._match_asset(release, 'Nuitka')
+        self.assertEqual(url, 'https://url/pyinstaller')
+        self.assertIn('PyInstaller', name)
+
+    def test_no_matching_asset(self):
+        """无匹配 asset"""
+        release = self._make_release([
+            {'name': 'other-file.txt', 'browser_download_url': 'https://url/other'},
+        ])
+        url, name = self.su._match_asset(release, 'Nuitka')
+        self.assertEqual(url, '')
+        self.assertEqual(name, '')
+
+    def test_rejects_invalid_naming(self):
+        """拒绝不符合命名规范的 exe"""
+        release = self._make_release([
+            {
+                'name': 'M9A_Update_Assistant-v1.11.0.exe',
+                'browser_download_url': 'https://url/bad',
+            },
+        ])
+        url, name = self.su._match_asset(release, 'Nuitka')
+        self.assertEqual(url, '')
+
+
+class TestBackupAndReplace(unittest.TestCase):
+    """_backup_and_replace 静态方法测试"""
+
+    def setUp(self):
+        _suppress_logs()
+        self.tmpdir = tempfile.mkdtemp()
+        self.original_argv0 = sys.argv[0]
+        sys.argv[0] = os.path.join(self.tmpdir, "test_app.exe")
+
+    def tearDown(self):
+        sys.argv[0] = self.original_argv0
+        _cleanup_state_file()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_successful_replace(self):
+        """成功替换"""
+        target = os.path.join(self.tmpdir, "app.exe")
+        new_file = os.path.join(self.tmpdir, "app.new.exe")
+        backup_file = os.path.join(self.tmpdir, "app.backup.exe")
+
+        Path(target).write_text("old version")
+        Path(new_file).write_text("new version")
+
+        state = UpdateState()
+        state["target"] = target
+        state["new_file"] = new_file
+        state["backup_file"] = backup_file
+        state.save()
+
+        result = SelfUpdater._backup_and_replace(state)
+        self.assertTrue(result)
+        self.assertTrue(os.path.exists(backup_file))
+        with open(backup_file, 'r') as f:
+            self.assertEqual(f.read(), "old version")
+        with open(target, 'r') as f:
+            self.assertEqual(f.read(), "new version")
+        self.assertFalse(os.path.exists(new_file))
+
+    def test_new_file_missing(self):
+        """新版本文件不存在"""
+        target = os.path.join(self.tmpdir, "app.exe")
+        new_file = os.path.join(self.tmpdir, "app.new.exe")
+        backup_file = os.path.join(self.tmpdir, "app.backup.exe")
+
+        Path(target).write_text("old version")
+
+        state = UpdateState()
+        state["target"] = target
+        state["new_file"] = new_file
+        state["backup_file"] = backup_file
+        state.save()
+
+        result = SelfUpdater._backup_and_replace(state)
+        self.assertFalse(result)
+        self.assertTrue(os.path.exists(target))
+        self.assertFalse(os.path.exists(new_file))
+
+
+class TestRestoreFromBackup(unittest.TestCase):
+    """_restore_from_backup 静态方法测试"""
+
+    def setUp(self):
+        _suppress_logs()
+        self.tmpdir = tempfile.mkdtemp()
+        self.original_argv0 = sys.argv[0]
+        sys.argv[0] = os.path.join(self.tmpdir, "test_app.exe")
+
+    def tearDown(self):
+        sys.argv[0] = self.original_argv0
+        _cleanup_state_file()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_restore_overwrites_bad_new(self):
+        """恢复时覆盖损坏的新版"""
+        target = os.path.join(self.tmpdir, "app.exe")
+        backup_file = os.path.join(self.tmpdir, "app.backup.exe")
+
+        Path(target).write_text("corrupted new version")
+        Path(backup_file).write_text("original old version")
+
+        state = UpdateState()
+        state["target"] = target
+        state["backup_file"] = backup_file
+        state.save()
+
+        result = SelfUpdater._restore_from_backup(state)
+        self.assertTrue(result)
+        with open(target, 'r') as f:
+            self.assertEqual(f.read(), "original old version")
+        self.assertFalse(os.path.exists(backup_file))
+
+    def test_restore_no_target_ok(self):
+        """目标不存在也能恢复"""
+        target = os.path.join(self.tmpdir, "app.exe")
+        backup_file = os.path.join(self.tmpdir, "app.backup.exe")
+
+        Path(backup_file).write_text("old version content")
+
+        state = UpdateState()
+        state["target"] = target
+        state["backup_file"] = backup_file
+        state.save()
+
+        result = SelfUpdater._restore_from_backup(state)
+        self.assertTrue(result)
+        with open(target, 'r') as f:
+            self.assertEqual(f.read(), "old version content")
+
+    def test_restore_no_backup_fails(self):
+        """无备份文件时失败"""
+        target = os.path.join(self.tmpdir, "app.exe")
+
+        state = UpdateState()
+        state["target"] = target
+        state["backup_file"] = os.path.join(self.tmpdir, "nonexistent.exe")
+        state.save()
+
+        result = SelfUpdater._restore_from_backup(state)
+        self.assertFalse(result)
+
+
+class TestSelfUpdateVerify(unittest.TestCase):
+    """self_update_verify 静态方法测试"""
+
+    def setUp(self):
+        _suppress_logs()
+        self.tmpdir = tempfile.mkdtemp()
+        self.original_argv0 = sys.argv[0]
+        sys.argv[0] = os.path.join(self.tmpdir, "test_app.exe")
+
+    def tearDown(self):
+        sys.argv[0] = self.original_argv0
+        _cleanup_state_file()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_no_state_file(self):
+        """无状态文件返回 1"""
+        code = SelfUpdater.self_update_verify()
+        self.assertEqual(code, 1)
+
+    @mock.patch('modules.self_updater.SelfUpdater._get_exe_path')
+    def test_sha256_mismatch(self, mock_exe_path):
+        """SHA256 不匹配返回 2"""
+        exe_path = os.path.join(self.tmpdir, "test_app.exe")
+        Path(exe_path).write_text("binary content")
+        mock_exe_path.return_value = Path(exe_path)
+
+        state = UpdateState()
+        state["expected_sha256"] = "0000000000000000000000000000000000000000000000000000000000000000"
+        state["new_version"] = "v9.9.9"
+        state.save()
+
+        code = SelfUpdater.self_update_verify()
+        self.assertEqual(code, 2)
+
+    @mock.patch('modules.self_updater.SelfUpdater._get_exe_path')
+    def test_version_mismatch(self, mock_exe_path):
+        """版本号不匹配返回 3"""
+        from modules.zip_manager import ZipManager
+
+        exe_path = os.path.join(self.tmpdir, "test_app.exe")
+        Path(exe_path).write_text("binary content")
+        mock_exe_path.return_value = Path(exe_path)
+
+        actual_sha = ZipManager.calculate_sha256(exe_path)
+
+        state = UpdateState()
+        state["expected_sha256"] = actual_sha
+        state["new_version"] = "v9.9.9"
+        state.save()
+
+        code = SelfUpdater.self_update_verify()
+        self.assertEqual(code, 3)
+
+    @mock.patch('modules.self_updater.SelfUpdater._get_exe_path')
+    def test_passes_with_valid_state(self, mock_exe_path):
+        """SHA256 和版本号均匹配且核心模块可导入 → 返回 0"""
+        from modules.zip_manager import ZipManager
+        import M9A_Update_Assistant as app_module
+
+        exe_path = os.path.join(self.tmpdir, "test_app.exe")
+        Path(exe_path).write_text("binary content")
+        mock_exe_path.return_value = Path(exe_path)
+
+        actual_sha = ZipManager.calculate_sha256(exe_path)
+
+        state = UpdateState()
+        state["expected_sha256"] = actual_sha
+        state["new_version"] = app_module.VERSION
+        state.save()
+
+        code = SelfUpdater.self_update_verify()
+        self.assertEqual(code, 0)
+
+
+def _suppress_logs():
+    """抑制日志输出"""
+    logging.getLogger("M9AUpdateAssistant").setLevel(logging.CRITICAL)
+
+
+def _cleanup_state_file():
+    """清理可能残留的 update_state.ini"""
+    ini_path = UpdateState._resolve_file_path()
+    try:
+        ini_path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 if __name__ == '__main__':
