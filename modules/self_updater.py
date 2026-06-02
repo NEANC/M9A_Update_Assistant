@@ -612,21 +612,29 @@ class SelfUpdater:
         if lock_file.exists():
             lock_file.unlink()
 
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [
                 "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                 "-File", str(base_dir / "M9A_Update_Assistant_Update_Helper.ps1"),
                 "-ParentPid", str(os.getpid()),
             ],
-            creationflags=subprocess.DETACHED_PROCESS,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
 
         deadline = time.time() + 5
         while time.time() < deadline:
             if lock_file.exists():
                 return
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"启动更新脚本失败：helper.ps1 异常退出，退出码 {proc.returncode}"
+                )
             time.sleep(0.1)
 
+        try:
+            proc.kill()
+        except Exception:
+            pass
         raise RuntimeError("启动更新脚本失败：helper.ps1 未在 5 秒内就绪")
 
     @staticmethod
