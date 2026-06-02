@@ -82,7 +82,7 @@ class SelfUpdater:
 
     def _is_prerelease(self, v: str) -> bool:
         """检查版本号是否为预发布版本"""
-        return bool(re.search(r'-(alpha|beta|rc)', v))
+        return bool(re.search(r'-(alpha|beta|rc)', v, re.IGNORECASE))
 
     def _version_newer_than(self, current: str, latest: str) -> bool:
         """
@@ -119,10 +119,10 @@ class SelfUpdater:
     def _prerelease_weight(v: str) -> Tuple[int, int]:
         """返回预发布权重：alpha=(1, N), beta=(2, N), rc=(3, N)，缺数字时 N=0"""
         WEIGHT_MAP = {'alpha': 1, 'beta': 2, 'rc': 3}
-        match = re.search(r'-(alpha|beta|rc)(?:\.?(\d+))?', v)
+        match = re.search(r'-(alpha|beta|rc)(?:[-.]?(\d+))?', v, re.IGNORECASE)
         if not match:
             return (0, 0)
-        kind = match.group(1)
+        kind = match.group(1).lower()
         num = int(match.group(2)) if match.group(2) else 0
         return (WEIGHT_MAP.get(kind, 0), num)
 

@@ -86,8 +86,13 @@ class TestVersionToTuple(unittest.TestCase):
         """预发布版本检测"""
         su = SelfUpdater('', '', None)
         self.assertTrue(su._is_prerelease('v1.11.0-alpha'))
+        self.assertTrue(su._is_prerelease('v1.11.0-Alpha'))
+        self.assertTrue(su._is_prerelease('v1.11.0-ALPHA'))
         self.assertTrue(su._is_prerelease('v1.11.0-beta2'))
+        self.assertTrue(su._is_prerelease('v1.11.0-Beta.1'))
         self.assertTrue(su._is_prerelease('v1.11.0-rc'))
+        self.assertTrue(su._is_prerelease('v1.11.0-RC1'))
+        self.assertTrue(su._is_prerelease('v1.11.0-Rc-1'))
         self.assertFalse(su._is_prerelease('v1.11.0'))
         self.assertFalse(su._is_prerelease('v1.10.1-9-build.gb6da5ee'))
 
@@ -135,6 +140,28 @@ class TestVersionToTuple(unittest.TestCase):
         su = SelfUpdater('', '', None)
         self.assertTrue(su._version_newer_than('v1.13.0-beta.1', 'v1.13.0-beta.2'))
         self.assertFalse(su._version_newer_than('v1.13.0-beta.2', 'v1.13.0-beta.1'))
+
+    def test_version_newer_than_case_insensitive(self):
+        """大小写不敏感预发布比较：Alpha → Beta → RC"""
+        su = SelfUpdater('', '', None)
+        self.assertTrue(su._version_newer_than('v1.13.0-Alpha', 'v1.13.0-Beta'))
+        self.assertTrue(su._version_newer_than('v1.13.0-BETA', 'v1.13.0-RC'))
+        self.assertTrue(su._version_newer_than('v1.13.0-RC1', 'v1.13.0-RC2'))
+        self.assertTrue(su._version_newer_than('v1.13.0-Alpha', 'v1.13.0-alpha1'))
+        # Alpha 和 Alpha.1 数字相同都是1，权重相等不视作升级
+        self.assertFalse(su._version_newer_than('v1.13.0-Alpha.1', 'v1.13.0-alpha1'))
+        self.assertFalse(su._version_newer_than('v1.13.0-alpha1', 'v1.13.0-Alpha.1'))
+
+    def test_version_newer_than_dash_suffix(self):
+        """-N 后缀预发布：Alpha-1 → Alpha-2"""
+        su = SelfUpdater('', '', None)
+        self.assertTrue(su._version_newer_than('v1.13.0-Alpha-1', 'v1.13.0-Alpha-2'))
+        self.assertTrue(su._version_newer_than('v1.13.0-alpha-2', 'v1.13.0-beta-3'))
+        self.assertTrue(su._version_newer_than('v1.13.0-Beta-2', 'v1.13.0-Beta.3'))
+        self.assertTrue(su._version_newer_than('v1.13.0-rc-1', 'v1.13.0-Rc-3'))
+        # -N 和 .N 同数字权重相等
+        self.assertFalse(su._version_newer_than('v1.13.0-Alpha-1', 'v1.13.0-Alpha.1'))
+        self.assertFalse(su._version_newer_than('v1.13.0-alpha.1', 'v1.13.0-Alpha-1'))
 
     def test_is_build_tag(self):
         """构建标签检测"""
