@@ -2,6 +2,7 @@
 # -_- coding: utf-8 -_-
 
 import logging
+import os
 import shutil
 import sys
 
@@ -197,6 +198,11 @@ class M9AUpdateAssistant:
 
         outdated = []
         for m9a_folder in self.config.m9a_folders:
+            if not os.path.exists(m9a_folder):
+                self.logger.info(f"{m9a_folder} 目录不存在，将创建并部署最新版本")
+                outdated.append(m9a_folder)
+                continue
+
             local_version = M9AUpdater.get_version_from_interface(m9a_folder)
             if not local_version:
                 self.logger.warning(f"{m9a_folder} 未读取到本地版本号，将强制更新到 {latest_version}")
@@ -434,9 +440,14 @@ class M9AUpdateAssistant:
         for index, m9a_folder in enumerate(outdated_folders, 1):
             self.logger.info(f"开始更新第 {index}/{len(outdated_folders)} 个 M9A: {m9a_folder}")
 
-            config_backup_successful = self._updater.backup_config(m9a_folder, version)
-            if not config_backup_successful:
-                self.logger.warning("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
+            folder_existed = os.path.exists(m9a_folder)
+
+            if folder_existed:
+                config_backup_successful = self._updater.backup_config(m9a_folder, version)
+                if not config_backup_successful:
+                    self.logger.warning("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
+            else:
+                config_backup_successful = False
 
             if not self._updater.clean_m9a_folder(m9a_folder):
                 self.logger.critical(f"清理 M9A 文件夹失败: {m9a_folder}")
