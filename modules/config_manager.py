@@ -92,16 +92,22 @@ class ConfigManager:
     def _generate_default_config(self) -> None:
         """生成默认配置文件"""
         default_config = self._build_default_config()
+        tmp_path = self.config_file + '.tmp'
         try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 f.write(default_config)
+            os.replace(tmp_path, self.config_file)
             self.logger.info(f"已生成默认配置文件: {self.config_file}")
             self.logger.info("请修改配置文件后重新运行软件。")
             self.logger.info("按任意键退出...")
             input()
             sys.exit(0)
-        except IOError as e:
+        except OSError as e:
             self.logger.error(f"生成配置文件失败: {e}")
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
             sys.exit(1)
 
     def _regenerate_config_file(self) -> None:
@@ -145,11 +151,17 @@ class ConfigManager:
                     lines.append(f'{key} = {val}')
                 lines.append('')
 
+        tmp_path = self.config_file + '.tmp'
         try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(lines))
+            os.replace(tmp_path, self.config_file)
         except OSError as e:
             self.logger.error(f"写入配置文件失败: {e}")
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     def _sanitize_config_file(self) -> None:
         """逐行清理损坏行：空键值行删除，无 = 行注释掉"""
@@ -181,11 +193,17 @@ class ConfigManager:
             new_lines.append(line)
 
         if fixed:
+            tmp_path = self.config_file + '.tmp'
             try:
-                with open(self.config_file, 'w', encoding='utf-8') as f:
+                with open(tmp_path, 'w', encoding='utf-8') as f:
                     f.writelines(new_lines)
+                os.replace(tmp_path, self.config_file)
             except OSError as e:
                 self.logger.error(f"修复配置文件失败: {e}")
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     def _recover_orphan_keys(self) -> bool:
         """将误归属的模板键还原到正确的节，返回是否做了修改"""
