@@ -88,7 +88,7 @@ class M9AUpdater:
         """
         version = self.get_version_from_interface(m9a_folder, version)
         if not version:
-            self.logger.warning("版本号为空，跳过备份")
+            self.logger.warning("未找到版本号，跳过备份")
             return False
 
         m9a_config_path = Path(m9a_folder) / "config"
@@ -112,7 +112,7 @@ class M9AUpdater:
                 shutil.make_archive(str(old_backup_dir / old_backup_name), 'zip', str(archive_path.parent))
 
                 shutil.rmtree(archive_path.parent)
-                self.logger.info(f"已删除旧备份目录: {archive_path.parent}")
+                self.logger.info(f"删除旧备份目录: {archive_path.parent}")
 
             archive_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(m9a_config_path, archive_path, dirs_exist_ok=True)
@@ -178,7 +178,7 @@ class M9AUpdater:
         m9a_config_path = Path(m9a_folder) / "config"
 
         if not archive_config_path.exists():
-            self.logger.warning(f"备份的 config 文件夹不存在: {archive_config_path}")
+            self.logger.warning(f"未找到备份的 config 文件夹: {archive_config_path}")
             return False
 
         try:
