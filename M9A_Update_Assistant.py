@@ -2,6 +2,8 @@
 # -_- coding: utf-8 -_-
 
 import logging
+import os
+import shutil
 import sys
 
 import colorama
@@ -15,6 +17,7 @@ from modules.github_release_client import GitHubReleaseClient
 from modules.download_manager import DownloadManager
 from modules.zip_manager import ZipManager
 from modules.m9a_updater import M9AUpdater
+from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater
 
 
@@ -195,6 +198,11 @@ class M9AUpdateAssistant:
 
         outdated = []
         for m9a_folder in self.config.m9a_folders:
+            if not os.path.exists(m9a_folder):
+                self.logger.info(f"{m9a_folder} 目录不存在，将创建并部署最新版本")
+                outdated.append(m9a_folder)
+                continue
+
             local_version = M9AUpdater.get_version_from_interface(m9a_folder)
             if not local_version:
                 self.logger.warning(f"{m9a_folder} 未读取到本地版本号，将强制更新到 {latest_version}")
@@ -432,9 +440,14 @@ class M9AUpdateAssistant:
         for index, m9a_folder in enumerate(outdated_folders, 1):
             self.logger.info(f"开始更新第 {index}/{len(outdated_folders)} 个 M9A: {m9a_folder}")
 
-            config_backup_successful = self._updater.backup_config(m9a_folder, version)
-            if not config_backup_successful:
-                self.logger.warning("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
+            folder_existed = os.path.exists(m9a_folder)
+
+            if folder_existed:
+                config_backup_successful = self._updater.backup_config(m9a_folder, version)
+                if not config_backup_successful:
+                    self.logger.warning("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
+            else:
+                config_backup_successful = False
 
             if not self._updater.clean_m9a_folder(m9a_folder):
                 self.logger.critical(f"清理 M9A 文件夹失败: {m9a_folder}")
@@ -491,31 +504,100 @@ class M9AUpdateAssistant:
         )
 
 
-def main():
-    """主函数"""
-    if '--self-update-complete' in sys.argv:
-        assistant = M9AUpdateAssistant()
-        print_info()
-        assistant.logger.info("软件更新完成，正在验证...")
-
-        # 轻量 health-check：验证配置和关键模块可用
-        if not assistant.validate_config():
-            assistant.logger.critical("配置验证失败!")
-            SelfUpdater.rollback()
-            sys.exit(1)
-        assistant.logger.info("新版本验证通过")
-
-        from modules.self_updater import SelfUpdater
-        exe_path = SelfUpdater._get_exe_path()
-        bak_path = exe_path.with_name(f"{exe_path.name}.bak")
-        if bak_path.exists():
-            bak_path.unlink()
-            assistant.logger.info(f"已删除备份文件: {bak_path}")
-
-        assistant.logger.info("软件更新完成")
-        print(f"\n")
+def _cleanup_update_residue(logger: logging.Logger) -> None:
+    """清理上次成功更新后的残留文件"""
+    state = UpdateState.load()
+    if not state:
         return
 
+    current_state = state.get("State", "state", fallback="")
+
+    if current_state == "verified":
+        logger.info("清理上次更新残留文件...")
+        helper_file = Path(state["helper_file"])
+        backup_file = Path(state["backup_file"])
+
+        for f in [helper_file, backup_file]:
+            try:
+                if f.exists():
+                    f.unlink()
+                    logger.debug(f"已删除残留文件: {f}")
+            except OSError:
+                pass
+
+        state.delete()
+        logger.info("残留文件清理完成")
+    elif current_state in ("helper_started", "replacing", "pending_new_verify", "rollback"):
+        logger.warning("检测到上次更新未完成，尝试恢复...")
+        backup_file = Path(state["backup_file"])
+        target = Path(state["target"])
+        if backup_file.exists() and not target.exists():
+            shutil.move(str(backup_file), str(target))
+            logger.info("已从备份恢复")
+        state.delete()
+
+    elif current_state == "rollback_done":
+        logger.info("检测到上次更新回滚完成，清理状态文件")
+        state.delete()
+
+    elif current_state == "failed_disabled":
+        failed_ver = state["new_version"]
+        logger.warning(f"自更新已禁用：版本 {failed_ver} 多次验证失败")
+        logger.warning(f"将跳过版本 {failed_ver} 的自动更新，等待远端发布新版本")
+
+
+def main():
+    """主函数"""
+
+    # ── helper 模式 ──
+    if '--update-helper' in sys.argv:
+        try:
+            parent_pid_index = sys.argv.index('--parent-pid')
+            parent_pid = int(sys.argv[parent_pid_index + 1])
+        except (ValueError, IndexError):
+            logger = logging.getLogger("M9AUpdateAssistant")
+            logger.critical("--update-helper 缺少 --parent-pid 参数")
+            sys.exit(1)
+
+        SelfUpdater.helper_main(parent_pid)
+        return
+
+    # ── 新版验证模式 ──
+    if '--self-update-verify' in sys.argv:
+        exit_code = SelfUpdater.self_update_verify()
+        sys.exit(exit_code)
+
+    # ── 重试更新模式 ──
+    if '--retry-update' in sys.argv:
+        logger = logging.getLogger("M9AUpdateAssistant")
+        logger.info("正在重试自更新...")
+        assistant = M9AUpdateAssistant()
+        need_exit = assistant.check_self_update()
+        if need_exit:
+            sys.exit(0)
+        logger.error("重试更新失败，无法获取新版本")
+        return
+
+    # ── 更新失败模式 ──
+    if '--update-failed' in sys.argv:
+        print_info()
+        logger = logging.getLogger("M9AUpdateAssistant")
+        state = UpdateState.load()
+        if state:
+            failed_ver = state["new_version"]
+            logger.critical(f"自更新失败：版本 {failed_ver} 多次验证不通过")
+            print(f"\n软件自动更新失败，版本 {failed_ver} 已被标记为不可用。")
+            print("当前版本可继续使用，后续将跳过此版本的自动更新。")
+        else:
+            logger.critical("自更新失败，但无法读取状态信息")
+        print(f"\n按任意键退出...")
+        input()
+        return
+
+    # ── 正常启动：清理上次更新残留 ──
+    _cleanup_update_residue(logging.getLogger("M9AUpdateAssistant"))
+
+    # ── 仅检查自身更新模式 ──
     if any(flag in sys.argv for flag in ('-U', '--update', '--Update')):
         print_info()
         assistant = M9AUpdateAssistant()
