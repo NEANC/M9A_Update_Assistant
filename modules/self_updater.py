@@ -524,7 +524,7 @@ class SelfUpdater:
         """).lstrip("\n")
 
         script_path = script_dir / "M9A_Update_Assistant_Update_Helper.ps1"
-        script_path.write_text(ps1_content, encoding='utf-8')
+        script_path.write_text(ps1_content, encoding='utf-8-sig')
 
     @staticmethod
     def _generate_update_ps1(script_dir: Path) -> None:
