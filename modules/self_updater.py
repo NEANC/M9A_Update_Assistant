@@ -526,7 +526,6 @@ class SelfUpdater:
             from modules.config_manager import ConfigManager
             from modules.github_release_client import GitHubReleaseClient
             from modules.download_manager import DownloadManager
-            from modules.zip_manager import ZipManager
         except ImportError as e:
             logger.critical(f"核心模块导入失败: {e}")
             return 4
