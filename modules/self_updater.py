@@ -12,7 +12,7 @@ import time
 import requests
 
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 from modules.config_self_updater import UpdateState
 from modules.download_manager import DownloadManager
@@ -139,6 +139,24 @@ class SelfUpdater:
             return 'stable'
         return 'preview'
 
+    def _match_release_by_tag(self, current_version: str,
+                               headers: dict, proxies: dict) -> Optional[dict]:
+        """遍历 releases 列表，按 tag_name 大小写不敏感匹配当前版本"""
+        try:
+            api_url = f"https://api.github.com/repos/{self.SELF_UPDATE_REPO}/releases"
+            params = {'per_page': 50}
+            response = requests.get(api_url, headers=headers, proxies=proxies,
+                                    params=params, timeout=30)
+            response.raise_for_status()
+            for release in response.json():
+                if release.get('draft'):
+                    continue
+                if release.get('tag_name', '').lower() == current_version.lower():
+                    return release
+        except requests.RequestException as e:
+            self.logger.debug(f"遍历 releases 匹配失败: {e}")
+        return None
+
     def _fetch_current_release_sha256(self, current_version: str,
                                        package_type: str) -> str:
         """
@@ -162,10 +180,15 @@ class SelfUpdater:
             self.logger.debug(f"获取当前版本 release 信息: {api_url}")
             response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
             if response.status_code == 404:
+                self.logger.info(f"tag 名称精确匹配未找到，尝试大小写不敏感匹配...")
+                release_info = self._match_release_by_tag(current_version, headers, proxies)
+            else:
+                response.raise_for_status()
+                release_info = response.json()
+
+            if not release_info:
                 self.logger.warning(f"GitHub 上未找到当前版本 {current_version} 的 release")
                 return ""
-            response.raise_for_status()
-            release_info = response.json()
 
             _, exe_name = self._match_asset(release_info, package_type)
             if not exe_name:
