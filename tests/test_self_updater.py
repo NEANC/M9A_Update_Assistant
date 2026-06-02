@@ -14,7 +14,8 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.config_self_updater import UpdateState
-from modules.self_updater import SelfUpdater
+from modules.self_updater import SelfUpdater, _get_existing_retry_count
+from M9A_Update_Assistant import _cleanup_update_residue
 
 
 class TestDetectPackageType(unittest.TestCase):
@@ -220,6 +221,79 @@ class TestCheckSelfUpdate(unittest.TestCase):
 
         result = self.su.check_self_update('v1.0.0', gh, dm, zm)
         self.assertFalse(result)
+
+    @mock.patch('modules.self_updater.requests.get')
+    @mock.patch('modules.self_updater.SelfUpdater.detect_package_type')
+    def test_failed_disabled_skips(self, mock_detect, mock_get):
+        """状态为 failed_disabled 时跳过更新"""
+        mock_detect.return_value = (True, 'Nuitka')
+
+        mock_response = mock.MagicMock()
+        mock_response.json.return_value = {
+            'tag_name': 'v2.0.0',
+            'assets': [{
+                'name': 'M9A_Update_Assistant-Nuitka-v2.0.0.exe',
+                'browser_download_url': 'https://url/exe',
+            }],
+        }
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        pre_state = UpdateState()
+        pre_state["state"] = "failed_disabled"
+        pre_state["new_version"] = "v2.0.0"
+        pre_state.save()
+
+        from modules.github_release_client import GitHubReleaseClient
+        from modules.download_manager import DownloadManager
+        from modules.zip_manager import ZipManager
+
+        gh = GitHubReleaseClient('test/repo', 'latest', '', self.logger)
+        dm = DownloadManager('', '/tmp', self.logger)
+        zm = ZipManager(self.logger)
+
+        result = self.su.check_self_update('v1.0.0', gh, dm, zm)
+        self.assertFalse(result)
+        # 验证没有实际调用 GitHub（因为被 failed_disabled 提前拦截）
+        # mock_get 仍可能被调用（请求先发），但返回结果应为 False
+        # 关键是状态文件未被更新为 downloaded_verified 等
+        post_state = UpdateState.load()
+        self.assertEqual(post_state["state"], "failed_disabled")
+
+
+class TestGetExistingRetryCount(unittest.TestCase):
+    """_get_existing_retry_count 测试"""
+
+    def setUp(self):
+        _suppress_logs()
+        self.tmpdir = tempfile.mkdtemp()
+        self.original_argv0 = sys.argv[0]
+        sys.argv[0] = os.path.join(self.tmpdir, "test_app.exe")
+
+    def tearDown(self):
+        sys.argv[0] = self.original_argv0
+        _cleanup_state_file()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_no_state_file_returns_zero(self):
+        """无状态文件时返回 '0'"""
+        self.assertEqual(_get_existing_retry_count(), "0")
+
+    def test_existing_retry_count_preserved(self):
+        """已有 retry_count 时返回其值"""
+        state = UpdateState()
+        state.set("Retry", "retry_count", "2")
+        state.save()
+
+        self.assertEqual(_get_existing_retry_count(), "2")
+
+    def test_no_retry_count_defaults_zero(self):
+        """状态文件存在但无 retry_count 时返回 '0'"""
+        state = UpdateState()
+        state["state"] = "rollback_done"
+        state.save()
+
+        self.assertEqual(_get_existing_retry_count(), "0")
 
 
 class TestRollback(unittest.TestCase):
@@ -524,6 +598,83 @@ class TestSelfUpdateVerify(unittest.TestCase):
 
         code = SelfUpdater.self_update_verify()
         self.assertEqual(code, 0)
+
+
+class TestCleanupUpdateResidue(unittest.TestCase):
+    """_cleanup_update_residue 测试"""
+
+    def setUp(self):
+        _suppress_logs()
+        self.logger = logging.getLogger("TestCleanup")
+        self.tmpdir = tempfile.mkdtemp()
+        self.original_argv0 = sys.argv[0]
+        sys.argv[0] = os.path.join(self.tmpdir, "test_app.exe")
+
+    def tearDown(self):
+        sys.argv[0] = self.original_argv0
+        _cleanup_state_file()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_no_state_file(self):
+        """无状态文件时静默返回"""
+        _cleanup_update_residue(self.logger)
+
+    def test_rollback_done_cleans_state(self):
+        """rollback_done 状态 → 清理状态文件"""
+        state = UpdateState()
+        state["state"] = "rollback_done"
+        state.save()
+
+        _cleanup_update_residue(self.logger)
+        self.assertIsNone(UpdateState.load())
+
+    def test_failed_disabled_keeps_state(self):
+        """failed_disabled 状态 → 不删除状态文件（供后续跳过使用）"""
+        state = UpdateState()
+        state["state"] = "failed_disabled"
+        state["new_version"] = "v2.0.0"
+        state.save()
+
+        _cleanup_update_residue(self.logger)
+        loaded = UpdateState.load()
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded["state"], "failed_disabled")
+
+    def test_verified_cleans_residue(self):
+        """verified 状态 → 清理残留文件 + 删除状态文件"""
+        helper = os.path.join(self.tmpdir, "app.old.exe")
+        backup = os.path.join(self.tmpdir, "app.backup.exe")
+        Path(helper).write_text("helper")
+        Path(backup).write_text("backup")
+
+        state = UpdateState()
+        state["state"] = "verified"
+        state["helper_file"] = helper
+        state["backup_file"] = backup
+        state.save()
+
+        _cleanup_update_residue(self.logger)
+        self.assertFalse(os.path.exists(helper))
+        self.assertFalse(os.path.exists(backup))
+        self.assertIsNone(UpdateState.load())
+
+    def test_interrupted_recovering_restores(self):
+        """helper_started 且 backup 存在且 target 不存在 → 恢复备份"""
+        target = os.path.join(self.tmpdir, "app.exe")
+        backup_file = os.path.join(self.tmpdir, "app.backup.exe")
+        Path(backup_file).write_text("old binary")
+
+        state = UpdateState()
+        state["state"] = "helper_started"
+        state["target"] = target
+        state["backup_file"] = backup_file
+        state.save()
+
+        _cleanup_update_residue(self.logger)
+        self.assertTrue(os.path.exists(target))
+        with open(target, 'r') as f:
+            self.assertEqual(f.read(), "old binary")
+        self.assertIsNone(UpdateState.load())
 
 
 def _suppress_logs():
