@@ -436,7 +436,7 @@ class SelfUpdater:
                         $newContent = "$content`r`n$key = $value"
                     }
                     $tmp = "$stateFile.tmp"
-                    $newContent | Set-Content -LiteralPath $tmp -Encoding UTF8
+                    [System.IO.File]::WriteAllText($tmp, $newContent)
                     Move-Item -LiteralPath $tmp -Destination $stateFile -Force
                 } catch {
                     Write-Log "Write-IniValue failed: $($_.Exception.Message)"

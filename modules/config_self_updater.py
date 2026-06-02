@@ -78,8 +78,11 @@ class UpdateState:
 
         state = cls()
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                state._config.read_file(f)
+            content = file_path.read_text(encoding='utf-8')
+            # PowerShell 5.1 的 Set-Content -Encoding UTF8 会写入 BOM，须剔除
+            if content.startswith('\ufeff'):
+                content = content[1:]
+            state._config.read_string(content)
         except (configparser.Error, OSError) as e:
             logging.getLogger("M9AUpdateAssistant").warning(f"读取状态文件失败: {e}")
             return None
