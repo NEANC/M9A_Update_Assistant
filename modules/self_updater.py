@@ -258,6 +258,7 @@ class SelfUpdater:
             if not exe_url:
                 return False
 
+            temp_dir = Path(self.temp_folder)
             cache_dir = temp_dir / "UpdateCache" / "installs" / latest_version
             cache_dir.mkdir(parents=True, exist_ok=True)
             tmp_path = cache_dir / f"M9A_Update_Assistant-{latest_version}.exe.tmp"
