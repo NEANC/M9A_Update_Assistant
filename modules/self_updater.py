@@ -7,6 +7,8 @@ import re
 import shutil
 import subprocess
 import sys
+import textwrap
+import time
 import requests
 
 from pathlib import Path
@@ -137,6 +139,54 @@ class SelfUpdater:
             return 'stable'
         return 'preview'
 
+    def _fetch_current_release_sha256(self, current_version: str,
+                                       package_type: str) -> str:
+        """
+        从 GitHub API 获取当前版本的 exe asset 的 SHA256
+
+        Args:
+            current_version: 当前版本号（如 v1.13.0-beta）
+            package_type: 打包方式（Nuitka / PyInstaller）
+
+        Returns:
+            SHA256 值，获取失败返回空字符串
+        """
+        try:
+            api_url = (
+                f"https://api.github.com/repos/{self.SELF_UPDATE_REPO}"
+                f"/releases/tags/{current_version}"
+            )
+            headers = {'User-Agent': 'M9A-Update-Assistant'}
+            proxies = {'http': self.proxy, 'https': self.proxy} if self.proxy else None
+
+            self.logger.debug(f"获取当前版本 release 信息: {api_url}")
+            response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
+            if response.status_code == 404:
+                self.logger.warning(f"GitHub 上未找到当前版本 {current_version} 的 release")
+                return ""
+            response.raise_for_status()
+            release_info = response.json()
+
+            _, exe_name = self._match_asset(release_info, package_type)
+            if not exe_name:
+                self.logger.warning("当前版本 exe asset 未匹配到对应文件")
+                return ""
+
+            assets = release_info.get('assets', [])
+            for asset in assets:
+                if asset.get('name') == exe_name:
+                    digest = asset.get('digest', '')
+                    if digest.startswith('sha256:'):
+                        return digest[7:]
+            self.logger.warning("当前版本 release 中未找到 SHA256 digest")
+            return ""
+        except requests.RequestException as e:
+            self.logger.warning(f"获取当前版本 SHA256 失败: {e}")
+            return ""
+        except Exception as e:
+            self.logger.warning(f"获取当前版本 SHA256 时出错: {e}")
+            return ""
+
     def check_self_update(self, current_version: str, gh_client: GitHubReleaseClient,
                            download_manager: DownloadManager,
                            zip_manager: ZipManager) -> bool:
@@ -147,12 +197,6 @@ class SelfUpdater:
             bool: 是否需要退出以完成更新
         """
         self.logger.info("开始检查软件版本...")
-
-        existing_state = UpdateState.load()
-        if existing_state and existing_state.get("State", "state", fallback="") == "failed_disabled":
-            failed_ver = existing_state["new_version"]
-            self.logger.info(f"版本 {failed_ver} 之前验证失败，跳过自动更新")
-            return False
 
         is_bundled, package_type = self.detect_package_type()
         if not is_bundled:
@@ -201,24 +245,46 @@ class SelfUpdater:
                     self.logger.error("版本号校验错误，跳过更新")
                 return False
 
+            existing_state = UpdateState.load()
+            if existing_state and existing_state.get("State", "state", fallback="") == "failed_disabled":
+                failed_ver = existing_state["new_version"]
+                if failed_ver == latest_version:
+                    self.logger.info(f"版本 {latest_version} 存在更新失败记录，跳过更新")
+                    return False
+                self.logger.debug(f"新版本 {latest_version} 与失败记录版本 {failed_ver} 不同，清除失败状态继续更新")
+                existing_state.delete()
+
             exe_url, exe_name = self._match_asset(release_info, package_type)
             if not exe_url:
                 return False
 
-            temp_dir = Path(self.temp_folder)
-            temp_dir.mkdir(parents=True, exist_ok=True)
-            tmp_path = temp_dir / "M9A_Update_Assistant_new.exe.tmp"
-            sha_path = temp_dir / "M9A_Update_Assistant_new.sha256"
+            cache_dir = temp_dir / "UpdateCache" / "installs" / latest_version
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            tmp_path = cache_dir / f"M9A_Update_Assistant-{latest_version}.exe.tmp"
+            sha_path = cache_dir / f"M9A_Update_Assistant-{latest_version}.sha256"
 
-            expected_sha256 = gh_client.get_asset_sha256(release_info, exe_name)
-            if not expected_sha256:
-                expected_sha256 = gh_client.get_exe_sha256_from_body(release_info, exe_name)
+            new_sha256 = gh_client.get_asset_sha256(release_info, exe_name)
+            if not new_sha256:
+                new_sha256 = gh_client.get_exe_sha256_from_body(release_info, exe_name)
 
-            if not expected_sha256:
+            if not new_sha256:
                 self.logger.critical("Github API 中未找到 SHA256 校验值，跳过更新")
                 return False
 
-            sha_path.write_text(expected_sha256, encoding='ascii')
+            old_sha256 = self._fetch_current_release_sha256(current_version, package_type)
+            if old_sha256:
+                current_exe = self._get_exe_path()
+                actual_current = ZipManager.calculate_sha256(str(current_exe))
+                if actual_current != old_sha256:
+                    self.logger.critical("当前程序 SHA256 与 GitHub 记录不一致，放弃更新")
+                    self.logger.warning(f"GitHub: {old_sha256[:16]}...")
+                    self.logger.warning(f"本地:   {actual_current[:16]}...")
+                    return False
+                self.logger.info("当前版本 SHA256 校验通过")
+            else:
+                self.logger.warning("未能从 GitHub 获取当前版本 SHA256，跳过自身完整性校验")
+
+            sha_path.write_text(new_sha256, encoding='ascii')
             self.logger.debug(f"已保存 SHA256 校验值: {sha_path}")
 
             max_retries = 3
@@ -232,7 +298,7 @@ class SelfUpdater:
                     self.logger.error("下载失败")
                     continue
 
-                if zip_manager.verify_file_sha256(str(tmp_path), expected_sha256):
+                if zip_manager.verify_file_sha256(str(tmp_path), new_sha256):
                     break
                 self.logger.error("SHA256 校验失败，准备重试")
 
@@ -244,7 +310,8 @@ class SelfUpdater:
 
             self.logger.info("新版本已下载并校验通过")
 
-            self._replace_executable(tmp_path, sha_path, latest_version)
+            self._replace_executable(tmp_path, sha_path, latest_version,
+                                      old_sha256, new_sha256)
             return True
 
         except requests.RequestException as e:
@@ -287,296 +354,232 @@ class SelfUpdater:
         return Path(sys.executable).resolve()
 
     @staticmethod
-    def _wait_for_parent_exit(parent_pid: int, timeout: int = 30) -> bool:
+    def _generate_helper_ps1(script_dir: Path) -> None:
         """
-        等待父进程退出
+        生成 M9A_Update_Assistant_Update_Helper.ps1
 
         Args:
-            parent_pid: 父进程 PID
-            timeout: 超时秒数
-
-        Returns:
-            父进程是否在超时前退出
+            script_dir: 脚本输出目录（与 exe 同目录）
         """
-        import ctypes
+        ps1_content = textwrap.dedent(r"""
+            <#
+            .SYNOPSIS
+                M9A_Update_Assistant_Update_Helper
+            .DESCRIPTION
+                等待主进程退出 → 调用 update.ps1 替换 → 验证新版 → 提交或回滚
+            #>
+            param([int]$ParentPid)
 
-        logger = logging.getLogger("M9AUpdateAssistant")
-        SYNCHRONIZE = 0x00100000
-        WAIT_OBJECT_0 = 0
+            $ErrorActionPreference = "Stop"
+            $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+            $stateFile = Join-Path $scriptDir "update_state.ini"
+            $lockFile  = Join-Path $scriptDir "update_started.lock"
+            $logFile   = Join-Path $scriptDir "update.log"
+            $updatePs1 = Join-Path $scriptDir "M9A_Update_Assistant_Update.ps1"
 
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(SYNCHRONIZE, False, parent_pid)
-        if not handle:
-            logger.warning(f"无法打开父进程句柄 (PID={parent_pid})，等待 3 秒后继续")
-            import time
-            time.sleep(3)
-            return True
+            function Write-Log($msg) {
+                $line = "$(Get-Date -Format o) $msg"
+                Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
+            }
 
-        logger.info(f"等待父进程退出 (PID={parent_pid}, 超时={timeout}s)...")
-        result = kernel32.WaitForSingleObject(handle, timeout * 1000)
-        kernel32.CloseHandle(handle)
+            function Read-IniValue($section, $key) {
+                $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8
+                $sectionEsc = [regex]::Escape("[$section]")
+                $keyEsc = [regex]::Escape($key)
+                $pattern = "(?ms)^$sectionEsc.*?^$keyEsc\s*=\s*(.*?)\s*$"
+                if ($content -match $pattern) { return $matches[1] }
+                return ""
+            }
 
-        if result == WAIT_OBJECT_0:
-            logger.info("父进程已退出")
-            return True
-        logger.warning(f"等待父进程超时 (结果={result})")
-        return False
+            function Write-IniValue($section, $key, $value) {
+                $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8
+                $sectionEsc = [regex]::Escape("[$section]")
+                $keyEsc = [regex]::Escape($key)
+                $pattern = "(?ms)(^$sectionEsc.*?^$keyEsc\s*=\s*).*?(\s*$)"
+                $newContent = $content -replace $pattern, "`${1}$value`${2}"
+                $tmp = "$stateFile.tmp"
+                $newContent | Set-Content -LiteralPath $tmp -Encoding UTF8
+                Move-Item -LiteralPath $tmp -Destination $stateFile -Force
+            }
+
+            function Restore-Backup($reason) {
+                Write-Log "rollback: $reason"
+                try {
+                    $target  = Read-IniValue "Files" "target"
+                    $backup  = Read-IniValue "Files" "backup_file"
+                    $newFile = Read-IniValue "Files" "new_file"
+
+                    if (Test-Path -LiteralPath $target) {
+                        Remove-Item -LiteralPath $target -Force
+                    }
+                    if (Test-Path -LiteralPath $backup) {
+                        Move-Item -LiteralPath $backup -Destination $target -Force
+                        Write-IniValue "State" "state" "rollback_done"
+                        Write-IniValue "State" "last_error" $reason
+
+                        $retry = [int](Read-IniValue "Retry" "retry_count")
+                        $max   = [int](Read-IniValue "Retry" "max_retry")
+                        $retry++
+                        Write-IniValue "Retry" "retry_count" "$retry"
+
+                        if ($retry -lt $max) {
+                            Start-Process -FilePath $target -ArgumentList "--retry-update"
+                        } else {
+                            Write-IniValue "State" "state" "failed_disabled"
+                            Start-Process -FilePath $target -ArgumentList "--update-failed"
+                        }
+                        exit 1
+                    }
+                    Write-IniValue "State" "state" "failed_disabled"
+                    Write-IniValue "State" "last_error" "backup not found: $backup"
+                    exit 2
+                } catch {
+                    Write-IniValue "State" "state" "failed_disabled"
+                    Write-IniValue "State" "last_error" $_.Exception.Message
+                    exit 3
+                }
+            }
+
+            try {
+                New-Item -LiteralPath $lockFile -ItemType File -Force | Out-Null
+                Write-IniValue "State" "state" "helper_started"
+                Write-Log "helper started"
+
+                if ($ParentPid -gt 0) {
+                    try { Wait-Process -Id $ParentPid -Timeout 60 }
+                    catch {
+                        $p = Get-Process -Id $ParentPid -ErrorAction SilentlyContinue
+                        if ($p) { throw "parent still alive: $ParentPid" }
+                    }
+                }
+
+                Write-IniValue "State" "state" "replacing"
+                Write-Log "running update.ps1"
+
+                $updateProc = Start-Process -FilePath "powershell.exe" -ArgumentList @(
+                    "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", $updatePs1
+                ) -Wait -PassThru
+
+                if ($updateProc.ExitCode -ne 0) {
+                    Restore-Backup "update.ps1 failed: $($updateProc.ExitCode)"
+                }
+
+                $target    = Read-IniValue "Files" "target"
+                $newSha256 = Read-IniValue "Version" "new_sha256"
+                $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash.ToLowerInvariant()
+                if ($actual -ne $newSha256.ToLowerInvariant()) {
+                    Restore-Backup "target hash mismatch after replace"
+                }
+
+                Write-IniValue "State" "state" "pending_new_verify"
+                Write-Log "starting new exe verify"
+
+                $newVersion = Read-IniValue "Version" "new_version"
+                $verifyProc = Start-Process -FilePath $target -ArgumentList @(
+                    "--self-update-verify",
+                    "--expected-sha256", $newSha256,
+                    "--expected-version", $newVersion
+                ) -Wait -PassThru
+
+                if ($verifyProc.ExitCode -ne 0) {
+                    Restore-Backup "verify failed: $($verifyProc.ExitCode)"
+                }
+
+                Write-IniValue "State" "state" "verified"
+                Write-Log "verified, starting normal app"
+                Start-Process -FilePath $target
+                exit 0
+            } catch {
+                Restore-Backup $_.Exception.Message
+            }
+        """).lstrip("\n")
+
+        script_path = script_dir / "M9A_Update_Assistant_Update_Helper.ps1"
+        script_path.write_text(ps1_content, encoding='utf-8')
 
     @staticmethod
-    def _backup_and_replace(state: "UpdateState") -> bool:
+    def _generate_update_ps1(script_dir: Path) -> None:
         """
-        执行文件备份和替换：app.exe → app.backup.exe, app.new.exe → app.exe
+        生成 M9A_Update_Assistant_Update.ps1
 
         Args:
-            state: 更新状态对象
-
-        Returns:
-            操作是否成功
+            script_dir: 脚本输出目录（与 exe 同目录）
         """
-        logger = logging.getLogger("M9AUpdateAssistant")
-        target = Path(state["target"])
-        new_file = Path(state["new_file"])
-        backup_file = Path(state["backup_file"])
+        ps1_content = textwrap.dedent(r"""
+            <#
+            .SYNOPSIS
+                M9A_Update_Assistant_Update
+            .DESCRIPTION
+                替换 app.exe 为新版本：app.exe → app.backup.exe, app.new.exe → app.exe
+                不做 SHA256 校验，校验由 helper.ps1 负责
+            #>
 
-        if not new_file.exists():
-            error_msg = f"新版本文件不存在: {new_file}"
-            state["last_error"] = error_msg
-            state.save()
-            logger.critical(error_msg)
-            return False
+            $ErrorActionPreference = "Stop"
+            $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+            $stateFile = Join-Path $scriptDir "update_state.ini"
 
-        try:
-            logger.info(f"备份旧版: {target} → {backup_file}")
-            shutil.move(str(target), str(backup_file))
+            function Read-IniValue($section, $key) {
+                $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8
+                $sectionEsc = [regex]::Escape("[$section]")
+                $keyEsc = [regex]::Escape($key)
+                $pattern = "(?ms)^$sectionEsc.*?^$keyEsc\s*=\s*(.*?)\s*$"
+                if ($content -match $pattern) { return $matches[1] }
+                return ""
+            }
 
-            logger.info(f"部署新版: {new_file} → {target}")
-            shutil.move(str(new_file), str(target))
+            try {
+                $target  = Read-IniValue "Files" "target"
+                $newFile = Read-IniValue "Files" "new_file"
+                $backup  = Read-IniValue "Files" "backup_file"
+                $newSha256 = Read-IniValue "Version" "new_sha256"
 
-            return True
-        except OSError as e:
-            error_msg = str(e)
-            state["last_error"] = error_msg
-            state.save()
-            logger.critical(f"文件替换失败: {e}")
-            if not target.exists() and backup_file.exists():
-                shutil.move(str(backup_file), str(target))
-                logger.info("已尝试恢复旧版")
-            return False
+                if (!(Test-Path -LiteralPath $newFile)) {
+                    throw "new file not found: $newFile"
+                }
 
-    @staticmethod
-    def _verify_new_version(state: "UpdateState") -> bool:
-        """
-        启动新版程序进行健康检查
+                $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $newFile).Hash.ToLowerInvariant()
+                if ($actual -ne $newSha256.ToLowerInvariant()) {
+                    throw "new file SHA256 mismatch: expected $newSha256, got $actual"
+                }
 
-        Args:
-            state: 更新状态对象
+                if (Test-Path -LiteralPath $backup) {
+                    Remove-Item -LiteralPath $backup -Force
+                }
+                if (Test-Path -LiteralPath $target) {
+                    Move-Item -LiteralPath $target -Destination $backup -Force
+                }
+                Move-Item -LiteralPath $newFile -Destination $target -Force
+                exit 0
+            } catch {
+                Write-Error $_.Exception.Message
+                exit 1
+            }
+        """).lstrip("\n")
 
-        Returns:
-            验证是否通过
-        """
-        logger = logging.getLogger("M9AUpdateAssistant")
-        target = state["target"]
-        logger.info("启动新版验证...")
-
-        try:
-            result = subprocess.run(
-                [target, "--self-update-verify"],
-                timeout=60,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            if result.returncode == 0:
-                logger.info("新版验证通过")
-                return True
-            logger.warning(f"新版验证失败，退出码: {result.returncode}")
-            state["last_error"] = f"新版验证退出码: {result.returncode}"
-            state.save()
-            return False
-        except subprocess.TimeoutExpired:
-            logger.critical("新版验证超时")
-            state["last_error"] = "新版验证超时"
-            state.save()
-            return False
-        except OSError as e:
-            logger.critical(f"启动新版失败: {e}")
-            state["last_error"] = str(e)
-            state.save()
-            return False
-
-    @staticmethod
-    def _restore_from_backup(state: "UpdateState") -> bool:
-        """
-        从备份恢复旧版程序
-
-        Args:
-            state: 更新状态对象
-
-        Returns:
-            恢复是否成功
-        """
-        logger = logging.getLogger("M9AUpdateAssistant")
-        target = Path(state["target"])
-        backup_file = Path(state["backup_file"])
-
-        if target.exists():
-            try:
-                target.unlink()
-            except OSError as e:
-                logger.error(f"删除损坏的新版失败: {e}")
-                state["last_error"] = str(e)
-                state.save()
-                return False
-
-        if not backup_file.exists():
-            msg = "备份文件不存在，无法恢复"
-            logger.critical(msg)
-            state["last_error"] = msg
-            state.save()
-            return False
-
-        try:
-            shutil.move(str(backup_file), str(target))
-            logger.info(f"已恢复旧版: {target}")
-            return True
-        except OSError as e:
-            logger.critical(f"恢复旧版失败: {e}")
-            state["last_error"] = str(e)
-            state.save()
-            return False
-
-    @staticmethod
-    def helper_main(parent_pid: int) -> None:
-        """
-        app.old.exe 的入口函数
-
-        等待旧版退出 → 替换 → 验证 → 提交或回滚
-
-        Args:
-            parent_pid: 旧版进程 PID
-        """
-        logger = logging.getLogger("M9AUpdateAssistant")
-        logger.info("更新助手已启动，等待主进程退出...")
-
-        if not SelfUpdater._wait_for_parent_exit(parent_pid):
-            logger.critical("等待主进程退出超时，放弃更新")
-            state = UpdateState.load()
-            if state:
-                state["last_error"] = "等待主进程退出超时"
-                state.transition("failed_disabled")
-            sys.exit(1)
-
-        state = UpdateState.load()
-        if not state:
-            logger.critical("未找到更新状态文件，更新中止")
-            sys.exit(1)
-
-        state.transition("replacing")
-
-        if not SelfUpdater._backup_and_replace(state):
-            logger.critical("文件替换失败")
-            sys.exit(1)
-
-        state.transition("pending_new_verify")
-
-        if SelfUpdater._verify_new_version(state):
-            state.transition("verified")
-            logger.info("新版验证通过，启动新版程序...")
-            subprocess.Popen(
-                [state["target"]],
-                creationflags=subprocess.DETACHED_PROCESS,
-            )
-        else:
-            logger.warning("新版验证失败，正在回滚...")
-            state.transition("rollback")
-            SelfUpdater._restore_from_backup(state)
-
-            retry_count = int(state.get("Retry", "retry_count", fallback="0"))
-            max_retry = int(state.get("Retry", "max_retry", fallback="3"))
-            retry_count += 1
-            state.set("Retry", "retry_count", str(retry_count))
-
-            if retry_count < max_retry:
-                state.transition("rollback_done")
-                logger.info(f"重试更新 ({retry_count}/{max_retry})...")
-                subprocess.Popen(
-                    [state["target"], "--retry-update"],
-                    creationflags=subprocess.DETACHED_PROCESS,
-                )
-            else:
-                state.transition("failed_disabled")
-                logger.critical(f"更新失败，已达最大重试次数 ({max_retry})")
-                subprocess.Popen(
-                    [state["target"], "--update-failed"],
-                    creationflags=subprocess.DETACHED_PROCESS,
-                )
-
-    @staticmethod
-    def self_update_verify() -> int:
-        """
-        新版程序健康检查
-
-        Returns:
-            0 表示验证通过，非 0 表示失败
-        """
-        logger = logging.getLogger("M9AUpdateAssistant")
-
-        state = UpdateState.load()
-        if not state:
-            logger.critical("未找到更新状态文件")
-            return 1
-
-        expected_sha256 = state["expected_sha256"]
-        new_version = state["new_version"]
-
-        current_exe = SelfUpdater._get_exe_path()
-        actual_sha256 = ZipManager.calculate_sha256(str(current_exe))
-
-        if expected_sha256 and actual_sha256 != expected_sha256:
-            logger.critical(
-                f"SHA256 不匹配: 期望 {expected_sha256[:16]}..., 实际 {actual_sha256[:16]}..."
-            )
-            return 2
-
-        import M9A_Update_Assistant as app_module
-        if new_version and app_module.VERSION != new_version:
-            logger.critical(f"版本号不匹配: 期望 {new_version}, 实际 {app_module.VERSION}")
-            return 3
-
-        try:
-            from modules.config_manager import ConfigManager
-            from modules.github_release_client import GitHubReleaseClient
-            from modules.download_manager import DownloadManager
-        except ImportError as e:
-            logger.critical(f"核心模块导入失败: {e}")
-            return 4
-
-        logger.info("新版验证全部通过")
-        return 0
+        script_path = script_dir / "M9A_Update_Assistant_Update.ps1"
+        script_path.write_text(ps1_content, encoding='utf-8')
 
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
-                             new_version: str = "") -> None:
+                             new_version: str, old_sha256: str,
+                             new_sha256: str) -> None:
         """
-        准备替换：复制自身为 helper → 写 INI 状态文件 → 启动 helper → 返回
+        准备替换：生成 helper.ps1 / update.ps1 → 写 INI 状态文件 → 启动 PowerShell → 握手退出
 
         Args:
-            tmp_path: 已下载的临时新版本文件
+            tmp_path: 已下载并通过 SHA256 校验的新版本文件
             sha_path: SHA256 校验值文件
             new_version: 新版本号
+            old_sha256: 旧版本 SHA256（来自 GitHub API）
+            new_sha256: 新版本 SHA256
         """
         current_exe = self._get_exe_path()
-        stem = current_exe.stem
-        helper_exe = current_exe.with_name(f"{stem}.old.exe")
-        new_exe = current_exe.with_name(f"{stem}.new.exe")
-        backup_exe = current_exe.with_name(f"{stem}.backup.exe")
-
-        expected = ""
-        if sha_path.exists():
-            expected = sha_path.read_text(encoding='ascii').strip()
+        base_dir = current_exe.parent
+        new_exe = base_dir / f"{current_exe.stem}.new.exe"
+        backup_exe = base_dir / f"{current_exe.stem}.backup.exe"
 
         shutil.copy2(tmp_path, new_exe)
         self.logger.info(f"新版本已暂存: {new_exe}")
-
-        shutil.copy2(current_exe, helper_exe)
-        self.logger.info(f"更新助手已准备: {helper_exe}")
 
         try:
             import M9A_Update_Assistant as app_module
@@ -589,24 +592,101 @@ class SelfUpdater:
         state["target"] = str(current_exe)
         state["new_file"] = str(new_exe)
         state["backup_file"] = str(backup_exe)
-        state["helper_file"] = str(helper_exe)
         state["old_version"] = old_version
         state["new_version"] = new_version
-        state["expected_sha256"] = expected
+        state["old_sha256"] = old_sha256
+        state["new_sha256"] = new_sha256
         state.set("Retry", "retry_count", _get_existing_retry_count())
         state.set("Retry", "max_retry", "3")
         state.save()
 
+        self._generate_helper_ps1(base_dir)
+        self._generate_update_ps1(base_dir)
+        self.logger.info(f"已生成更新脚本: {base_dir}")
+
         state.transition("helper_started")
 
         self.logger.info("启动更新进程...")
+        lock_file = base_dir / "update_started.lock"
+        if lock_file.exists():
+            lock_file.unlink()
+
         subprocess.Popen(
-            [str(helper_exe), '--update-helper', '--parent-pid', str(os.getpid())],
+            [
+                "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(base_dir / "M9A_Update_Assistant_Update_Helper.ps1"),
+                "-ParentPid", str(os.getpid()),
+            ],
             creationflags=subprocess.DETACHED_PROCESS,
         )
 
-        tmp_path.unlink(missing_ok=True)
-        sha_path.unlink(missing_ok=True)
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if lock_file.exists():
+                return
+            time.sleep(0.1)
+
+        raise RuntimeError("启动更新脚本失败：helper.ps1 未在 5 秒内就绪")
+
+    @staticmethod
+    def self_update_verify() -> int:
+        """
+        新版程序健康检查
+
+        优先从命令行参数 --expected-sha256 / --expected-version 获取期望值，
+        若无则回退到 update_state.ini 读取。
+
+        Returns:
+            0 表示验证通过，非 0 表示失败
+        """
+        logger = logging.getLogger("M9AUpdateAssistant")
+
+        expected_sha256 = ""
+        new_version = ""
+        try:
+            sha_idx = sys.argv.index("--expected-sha256")
+            expected_sha256 = sys.argv[sha_idx + 1]
+            ver_idx = sys.argv.index("--expected-version")
+            new_version = sys.argv[ver_idx + 1]
+        except (ValueError, IndexError):
+            state = UpdateState.load()
+            if state:
+                expected_sha256 = state["new_sha256"]
+                new_version = state["new_version"]
+
+        if not expected_sha256:
+            logger.critical("在 GitHub API 中未找到 SHA256，无法验证")
+            return 1
+
+        current_exe = SelfUpdater._get_exe_path()
+        actual_sha256 = ZipManager.calculate_sha256(str(current_exe))
+
+        if expected_sha256 and actual_sha256 != expected_sha256:
+            logger.critical(
+                f"SHA256 不匹配: \n"
+                f"GitHub: {expected_sha256[:16]}\n"
+                f"本地:   {actual_sha256[:16]}"
+            )
+            return 2
+
+        import M9A_Update_Assistant as app_module
+        if new_version and app_module.VERSION != new_version:
+            logger.critical(
+                f"版本号不匹配: \n"
+                f"GitHub: {new_version}\n"
+                f"本地:   {app_module.VERSION}")
+            return 3
+
+        try:
+            from modules.config_manager import ConfigManager
+            from modules.github_release_client import GitHubReleaseClient
+            from modules.download_manager import DownloadManager
+        except ImportError as e:
+            logger.critical(f"核心模块导入失败: {e}")
+            return 4
+
+        logger.info("新版验证全部通过")
+        return 0
 
     @staticmethod
     def rollback() -> bool:

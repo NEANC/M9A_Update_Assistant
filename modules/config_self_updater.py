@@ -28,8 +28,8 @@ class UpdateState:
 
     _DEFAULTS = {
         "State": {"state": "idle", "last_error": ""},
-        "Files": {"target": "", "new_file": "", "backup_file": "", "helper_file": ""},
-        "Version": {"old_version": "", "new_version": "", "expected_sha256": ""},
+        "Files": {"target": "", "new_file": "", "backup_file": ""},
+        "Version": {"old_version": "", "new_version": "", "old_sha256": "", "new_sha256": ""},
         "Retry": {"retry_count": "0", "max_retry": "3"},
     }
 

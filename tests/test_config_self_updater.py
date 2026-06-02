@@ -36,10 +36,10 @@ class TestUpdateStateInit(unittest.TestCase):
         self.assertEqual(state["target"], "")
         self.assertEqual(state["new_file"], "")
         self.assertEqual(state["backup_file"], "")
-        self.assertEqual(state["helper_file"], "")
         self.assertEqual(state["old_version"], "")
         self.assertEqual(state["new_version"], "")
-        self.assertEqual(state["expected_sha256"], "")
+        self.assertEqual(state["old_sha256"], "")
+        self.assertEqual(state["new_sha256"], "")
 
     def test_default_retry_values(self):
         """默认重试配置"""
@@ -76,23 +76,21 @@ class TestUpdateStateReadWrite(unittest.TestCase):
         state["target"] = r"C:\App\app.exe"
         state["new_file"] = r"C:\App\app.new.exe"
         state["backup_file"] = r"C:\App\app.backup.exe"
-        state["helper_file"] = r"C:\App\app.old.exe"
 
         self.assertEqual(state["target"], r"C:\App\app.exe")
         self.assertEqual(state["new_file"], r"C:\App\app.new.exe")
         self.assertEqual(state["backup_file"], r"C:\App\app.backup.exe")
-        self.assertEqual(state["helper_file"], r"C:\App\app.old.exe")
 
     def test_set_and_get_version_info(self):
         """设置和读取版本信息"""
         state = UpdateState()
         state["old_version"] = "v1.10.0"
         state["new_version"] = "v1.11.0"
-        state["expected_sha256"] = "abc123"
+        state["new_sha256"] = "abc123"
 
         self.assertEqual(state["old_version"], "v1.10.0")
         self.assertEqual(state["new_version"], "v1.11.0")
-        self.assertEqual(state["expected_sha256"], "abc123")
+        self.assertEqual(state["new_sha256"], "abc123")
 
     def test_set_and_get_last_error(self):
         """设置和读取错误信息"""
@@ -145,10 +143,10 @@ class TestUpdateStateSaveLoad(unittest.TestCase):
         state["target"] = r"C:\App\app.exe"
         state["new_file"] = r"C:\App\app.new.exe"
         state["backup_file"] = r"C:\App\app.backup.exe"
-        state["helper_file"] = r"C:\App\app.old.exe"
         state["old_version"] = "v1.10.0"
         state["new_version"] = "v1.11.0"
-        state["expected_sha256"] = "abcdef1234567890"
+        state["old_sha256"] = "abc111"
+        state["new_sha256"] = "abcdef1234567890"
         state["last_error"] = "测试错误"
         state.set("Retry", "retry_count", "1")
         state.set("Retry", "max_retry", "5")
@@ -160,10 +158,10 @@ class TestUpdateStateSaveLoad(unittest.TestCase):
         self.assertEqual(loaded["target"], r"C:\App\app.exe")
         self.assertEqual(loaded["new_file"], r"C:\App\app.new.exe")
         self.assertEqual(loaded["backup_file"], r"C:\App\app.backup.exe")
-        self.assertEqual(loaded["helper_file"], r"C:\App\app.old.exe")
         self.assertEqual(loaded["old_version"], "v1.10.0")
         self.assertEqual(loaded["new_version"], "v1.11.0")
-        self.assertEqual(loaded["expected_sha256"], "abcdef1234567890")
+        self.assertEqual(loaded["old_sha256"], "abc111")
+        self.assertEqual(loaded["new_sha256"], "abcdef1234567890")
         self.assertEqual(loaded.get("State", "last_error"), "测试错误")
         self.assertEqual(loaded.get("Retry", "retry_count"), "1")
         self.assertEqual(loaded.get("Retry", "max_retry"), "5")

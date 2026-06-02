@@ -185,4 +185,7 @@ cython_debug/
 .cursorindexingignore
 /更新前存档
 /测试存档
-gpt.md
+
+# AI 生成文档
+gpt*.md
+ds*.md
