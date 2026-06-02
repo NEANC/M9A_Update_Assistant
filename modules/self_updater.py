@@ -198,12 +198,6 @@ class SelfUpdater:
         """
         self.logger.info("开始检查软件版本...")
 
-        existing_state = UpdateState.load()
-        if existing_state and existing_state.get("State", "state", fallback="") == "failed_disabled":
-            failed_ver = existing_state["new_version"]
-            self.logger.info(f"版本 {failed_ver} 之前验证失败，跳过自动更新")
-            return False
-
         is_bundled, package_type = self.detect_package_type()
         if not is_bundled:
             self.logger.warning("当前为调试模式，跳过更新检查")
@@ -250,6 +244,15 @@ class SelfUpdater:
                 else:
                     self.logger.error("版本号校验错误，跳过更新")
                 return False
+
+            existing_state = UpdateState.load()
+            if existing_state and existing_state.get("State", "state", fallback="") == "failed_disabled":
+                failed_ver = existing_state["new_version"]
+                if failed_ver == latest_version:
+                    self.logger.info(f"版本 {latest_version} 存在更新失败记录，跳过更新")
+                    return False
+                self.logger.debug(f"新版本 {latest_version} 与失败记录版本 {failed_ver} 不同，清除失败状态继续更新")
+                existing_state.delete()
 
             exe_url, exe_name = self._match_asset(release_info, package_type)
             if not exe_url:
@@ -381,14 +384,18 @@ class SelfUpdater:
 
             function Read-IniValue($section, $key) {
                 $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8
-                $pattern = "(?ms)^\Q[$section]\E.*?^$key\s*=\s*(.*?)\s*$"
+                $sectionEsc = [regex]::Escape("[$section]")
+                $keyEsc = [regex]::Escape($key)
+                $pattern = "(?ms)^$sectionEsc.*?^$keyEsc\s*=\s*(.*?)\s*$"
                 if ($content -match $pattern) { return $matches[1] }
                 return ""
             }
 
             function Write-IniValue($section, $key, $value) {
                 $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8
-                $pattern = "(?ms)(^\Q[$section]\E.*?^$key\s*=\s*).*?(\s*$)"
+                $sectionEsc = [regex]::Escape("[$section]")
+                $keyEsc = [regex]::Escape($key)
+                $pattern = "(?ms)(^$sectionEsc.*?^$keyEsc\s*=\s*).*?(\s*$)"
                 $newContent = $content -replace $pattern, "`${1}$value`${2}"
                 $tmp = "$stateFile.tmp"
                 $newContent | Set-Content -LiteralPath $tmp -Encoding UTF8
@@ -514,7 +521,9 @@ class SelfUpdater:
 
             function Read-IniValue($section, $key) {
                 $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8
-                $pattern = "(?ms)^\Q[$section]\E.*?^$key\s*=\s*(.*?)\s*$"
+                $sectionEsc = [regex]::Escape("[$section]")
+                $keyEsc = [regex]::Escape($key)
+                $pattern = "(?ms)^$sectionEsc.*?^$keyEsc\s*=\s*(.*?)\s*$"
                 if ($content -match $pattern) { return $matches[1] }
                 return ""
             }
@@ -523,9 +532,15 @@ class SelfUpdater:
                 $target  = Read-IniValue "Files" "target"
                 $newFile = Read-IniValue "Files" "new_file"
                 $backup  = Read-IniValue "Files" "backup_file"
+                $newSha256 = Read-IniValue "Version" "new_sha256"
 
                 if (!(Test-Path -LiteralPath $newFile)) {
                     throw "new file not found: $newFile"
+                }
+
+                $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $newFile).Hash.ToLowerInvariant()
+                if ($actual -ne $newSha256.ToLowerInvariant()) {
+                    throw "new file SHA256 mismatch: expected $newSha256, got $actual"
                 }
 
                 if (Test-Path -LiteralPath $backup) {

@@ -514,11 +514,12 @@ def _cleanup_update_residue(logger: logging.Logger) -> None:
 
     if current_state == "verified":
         logger.info("清理上次更新残留文件...")
-        backup_file = Path(state["backup_file"])
-        script_dir = Path(state["target"]).parent
+        target_path = Path(state["target"])
+        script_dir = target_path.parent
 
         cleanup_files = [
-            backup_file,
+            Path(state["backup_file"]),
+            script_dir / f"{target_path.stem}.old.exe",
             script_dir / "M9A_Update_Assistant_Update_Helper.ps1",
             script_dir / "M9A_Update_Assistant_Update.ps1",
             script_dir / "update_started.lock",

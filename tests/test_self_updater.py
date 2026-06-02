@@ -552,17 +552,21 @@ class TestCleanupUpdateResidue(unittest.TestCase):
 
     def test_verified_cleans_residue(self):
         """verified 状态 → 清理残留文件 + 删除状态文件"""
-        backup = os.path.join(self.tmpdir, "app.backup.exe")
+        target = os.path.join(self.tmpdir, "M9A_Update_Assistant.exe")
+        backup = os.path.join(self.tmpdir, "M9A_Update_Assistant.backup.exe")
+        old_exe = os.path.join(self.tmpdir, "M9A_Update_Assistant.old.exe")
         Path(backup).write_text("backup")
+        Path(old_exe).write_text("old helper")
 
         state = UpdateState()
         state["state"] = "verified"
+        state["target"] = target
         state["backup_file"] = backup
-        state["target"] = os.path.join(self.tmpdir, "app.exe")
         state.save()
 
         _cleanup_update_residue(self.logger)
         self.assertFalse(os.path.exists(backup))
+        self.assertFalse(os.path.exists(old_exe))
         self.assertIsNone(UpdateState.load())
 
     def test_interrupted_recovering_restores(self):
