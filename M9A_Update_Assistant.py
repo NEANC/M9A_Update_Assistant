@@ -22,7 +22,7 @@ from modules.self_updater import SelfUpdater
 
 
 # 版本号, 发版前手动修改
-VERSION = "v1.10.0"
+VERSION = "v1.16.5"
 
 
 def print_info():
