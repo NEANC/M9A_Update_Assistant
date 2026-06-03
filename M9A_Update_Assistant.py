@@ -595,7 +595,7 @@ def main():
     # ── 仅检查自身更新模式 ──
     if any(flag in sys.argv for flag in ('-U', '--update', '--Update')):
         print_info()
-        force = '-f' in sys.argv
+        force = any(f in sys.argv for f in ('-f', '--update-force', '--Update-force'))
         assistant = M9AUpdateAssistant()
         if assistant.check_self_update(force=force):
             if force:
