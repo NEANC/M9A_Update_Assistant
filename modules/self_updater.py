@@ -790,8 +790,7 @@ class SelfUpdater:
         self.logger.info(f"新版本已暂存: {new_exe}")
 
         try:
-            import M9A_Update_Assistant as app_module
-            old_version = app_module.VERSION
+            from modules.version import VERSION as old_version
         except ImportError:
             old_version = ""
 
@@ -885,12 +884,12 @@ class SelfUpdater:
             )
             return 2
 
-        import M9A_Update_Assistant as app_module
-        if new_version and app_module.VERSION != new_version:
+        from modules.version import VERSION as actual_version
+        if new_version and actual_version != new_version:
             logger.critical(
                 f"版本号不匹配: \n"
                 f"GitHub: {new_version}\n"
-                f"本地:   {app_module.VERSION}")
+                f"本地:   {actual_version}")
             return 3
 
         try:

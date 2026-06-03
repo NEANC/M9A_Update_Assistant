@@ -19,10 +19,7 @@ from modules.zip_manager import ZipManager
 from modules.m9a_updater import M9AUpdater
 from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater
-
-
-# 版本号, 发版前手动修改
-VERSION = "v1.16.5"
+from modules.version import VERSION
 
 
 def print_info():

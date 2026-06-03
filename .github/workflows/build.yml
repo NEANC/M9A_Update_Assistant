@@ -121,8 +121,8 @@ jobs:
       - name: Update version
         shell: powershell
         run: |
-          (Get-Content M9A_Update_Assistant.py) -replace '^(VERSION = )".*"', '${1}"${{ needs.meta.outputs.tag }}"' | Set-Content M9A_Update_Assistant.py
-          Select-String -Path M9A_Update_Assistant.py -Pattern '^VERSION\b'
+          (Get-Content modules/version.py) -replace '^(VERSION = )".*"', '${1}"${{ needs.meta.outputs.tag }}"' | Set-Content modules/version.py
+          Select-String -Path modules/version.py -Pattern '^VERSION\b'
 
       # 检查当前 Python 版本
       - name: Check Python
@@ -207,8 +207,8 @@ jobs:
       - name: Update version
         shell: powershell
         run: |
-          (Get-Content M9A_Update_Assistant.py) -replace '^(VERSION = )".*"', '${1}"${{ needs.meta.outputs.tag }}"' | Set-Content M9A_Update_Assistant.py
-          Select-String -Path M9A_Update_Assistant.py -Pattern '^VERSION\b'
+          (Get-Content modules/version.py) -replace '^(VERSION = )".*"', '${1}"${{ needs.meta.outputs.tag }}"' | Set-Content modules/version.py
+          Select-String -Path modules/version.py -Pattern '^VERSION\b'
 
       # 检查当前 Python 版本
       - name: Check Python

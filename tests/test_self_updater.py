@@ -605,7 +605,7 @@ class TestSelfUpdateVerify(unittest.TestCase):
     def test_passes_with_valid_state(self, mock_exe_path):
         """SHA256 和版本号均匹配且核心模块可导入 → 返回 0"""
         from modules.zip_manager import ZipManager
-        import M9A_Update_Assistant as app_module
+        from modules.version import VERSION
 
         exe_path = os.path.join(self.tmpdir, "test_app.exe")
         Path(exe_path).write_text("binary content")
@@ -615,7 +615,7 @@ class TestSelfUpdateVerify(unittest.TestCase):
 
         state = UpdateState()
         state["new_sha256"] = actual_sha
-        state["new_version"] = app_module.VERSION
+        state["new_version"] = VERSION
         state.save()
 
         code = SelfUpdater.self_update_verify()
