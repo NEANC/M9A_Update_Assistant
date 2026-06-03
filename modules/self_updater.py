@@ -399,6 +399,7 @@ class SelfUpdater:
 
             $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
             $scriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
+            $scriptTag  = ($scriptName -split '_')[-1]
             $lockFile   = Join-Path $scriptDir "update_started.lock"
 
             try { New-Item -Path $lockFile -ItemType File -Force | Out-Null } catch {}
@@ -414,7 +415,7 @@ class SelfUpdater:
 
             function Write-Log($level, $message) {
                 try {
-                    $line = "{0} [{1}] [{2}] {3}" -f (Get-Date -Format o), $scriptName, $level, $message
+                    $line = "{0} -> {1} | {2} | {3}" -f $scriptTag, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $level, $message
                     Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
                 } catch {}
             }
@@ -461,7 +462,7 @@ class SelfUpdater:
                 if ($progress -ge 0) { Write-IniValue "State" "progress" "$progress" }
                 Write-IniValue "State" "updated_at" (Get-Date -Format o)
                 if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
-                Write-Log $level "$state / $step / $message"
+                Write-Log $level $message
                 try {
                     Write-Host ("[{0}] [{1}] {2} - {3}" -f (Get-Date -Format "HH:mm:ss"), $level, $step, $message)
                 } catch {}
@@ -591,6 +592,7 @@ class SelfUpdater:
 
             $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
             $scriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
+            $scriptTag  = ($scriptName -split '_')[-1]
             $stateFile  = Join-Path $scriptDir "update_state.ini"
             $logFile    = Join-Path $scriptDir "update.log"
 
@@ -601,7 +603,7 @@ class SelfUpdater:
 
             function Write-Log($level, $message) {
                 try {
-                    $line = "{0} [{1}] [{2}] {3}" -f (Get-Date -Format o), $scriptName, $level, $message
+                    $line = "{0} -> {1} | {2} | {3}" -f $scriptTag, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $level, $message
                     Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
                 } catch {}
             }
@@ -648,7 +650,7 @@ class SelfUpdater:
                 if ($progress -ge 0) { Write-IniValue "State" "progress" "$progress" }
                 Write-IniValue "State" "updated_at" (Get-Date -Format o)
                 if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
-                Write-Log $level "$state / $step / $message"
+                Write-Log $level $message
                 try {
                     Write-Host ("[{0}] [{1}] {2} - {3}" -f (Get-Date -Format "HH:mm:ss"), $level, $step, $message)
                 } catch {}

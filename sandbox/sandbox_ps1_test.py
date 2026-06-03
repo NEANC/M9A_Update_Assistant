@@ -74,7 +74,7 @@ if log_file.exists(): log_file.unlink()
 
 r = subprocess.run(
     ['powershell', '-NoP', '-Ep', 'Bypass', '-File', str(update_path)],
-    cwd=str(tmpdir), capture_output=True, encoding='utf-8', timeout=15
+    cwd=str(tmpdir), capture_output=True, text=True, timeout=15
 )
 print(f"  exit={r.returncode}")
 for l in r.stdout.splitlines():
@@ -111,9 +111,9 @@ if log_file.exists():
     print(f"  log lines: {len(lines)}")
     for l in lines[-3:]:
         print(f"    LOG: {l[:150]}")
-    # Check format: timestamp [scriptname] [LEVEL] state / step / message
-    assert '[M9A_Update_Assistant_Update.ps1]' in log_text, "FAIL: log missing script name!"
-    assert '[INFO]' in log_text or '[ERROR]' in log_text, "FAIL: log missing level!"
+    # Check format: scriptTag > timestamp | LEVEL | message
+    assert 'Update.ps1 ->' in log_text, "FAIL: log missing script tag!"
+    assert '| INFO |' in log_text or '| ERROR |' in log_text, "FAIL: log missing level!"
     print("  [PASS] Log format correct")
 else:
     print("  [WARN] No log file created")
@@ -130,7 +130,7 @@ if log_file.exists(): log_file.unlink()
 
 r = subprocess.run(
     ['powershell', '-NoP', '-Ep', 'Bypass', '-File', str(helper_path), '-ParentPid', '0'],
-    cwd=str(tmpdir), capture_output=True, encoding='utf-8', timeout=30
+    cwd=str(tmpdir), capture_output=True, text=True, timeout=30
 )
 l_ok = lock_file.exists()
 print(f"  exit={r.returncode}, lock={'OK' if l_ok else 'X'}")
@@ -148,8 +148,7 @@ if log_file.exists():
     print(f"  log lines: {len(log_text.strip().splitlines())}")
     for l in log_text.strip().splitlines()[:4]:
         print(f"    LOG: {l[:150]}")
-    assert '[M9A_Update_Assistant_Update_Helper.ps1]' in log_text
-    assert 'helper_started' in log_text
+    assert 'Helper.ps1 ->' in log_text
     print("  [PASS] Helper lock + log OK")
 
 print(f"\n[SANDBOX] ALL TESTS PASSED")
