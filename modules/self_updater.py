@@ -510,7 +510,7 @@ class SelfUpdater:
                     if (!(Test-Path -LiteralPath $backup)) {
                         Set-UpdateStatus "failed_disabled" "rollback_no_backup" "备份文件不存在: $backup" 100 "ERROR"
                         if (Test-Path -LiteralPath $target) {
-                            Start-Process -FilePath $target -ArgumentList "--update-failed"
+                            Start-CleanPyInstallerExe $target @('--update-failed')
                         }
                         exit 2
                     }
@@ -527,10 +527,10 @@ class SelfUpdater:
                     Write-IniValue "Retry" "retry_count" "$retry"
 
                     if ($retry -lt $max) {
-                        Start-Process -FilePath $target -ArgumentList "--retry-update"
+                        Start-CleanPyInstallerExe $target @('--retry-update')
                     } else {
                         Set-UpdateStatus "failed_disabled" "retry_limit_reached" "更新失败次数达到上限，已禁用本版本更新" 100 "ERROR"
-                        Start-Process -FilePath $target -ArgumentList "--update-failed"
+                        Start-CleanPyInstallerExe $target @('--update-failed')
                     }
                     exit 1
                 } catch {
@@ -539,19 +539,53 @@ class SelfUpdater:
                 }
             }
 
-            function Start-ProcWait($filePath, [string[]]$argList, $timeoutSec) {
+            function Start-ProcWait($filePath, [string[]]$argList, $timeoutSec, [bool]$resetPyInstallerEnv = $false) {
                 $psi = New-Object System.Diagnostics.ProcessStartInfo
                 $psi.FileName = $filePath
                 $psi.UseShellExecute = $false
+                $psi.WorkingDirectory = Split-Path -Parent $filePath
                 $psi.Arguments = ($argList | ForEach-Object {
                     if ($_ -match ' ') { '"{0}"' -f $_ } else { $_ }
                 }) -join ' '
+
+                if ($resetPyInstallerEnv) {
+                    $psi.EnvironmentVariables["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+                    foreach ($k in @("_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
+                                     "_PYI_APPLICATION_HOME_DIR", "_PYI_SPLASH_IPC",
+                                     "_PYI_LINUX_PROCESS_NAME")) {
+                        if ($psi.EnvironmentVariables.ContainsKey($k)) {
+                            $psi.EnvironmentVariables.Remove($k)
+                        }
+                    }
+                }
+
                 $proc = [System.Diagnostics.Process]::Start($psi)
                 if ($proc.WaitForExit($timeoutSec * 1000)) {
                     return $proc.ExitCode
                 }
                 try { $proc.Kill() } catch {}
                 return -1
+            }
+
+            function Start-CleanPyInstallerExe($filePath, [string[]]$argList = @()) {
+                $psi = New-Object System.Diagnostics.ProcessStartInfo
+                $psi.FileName = $filePath
+                $psi.UseShellExecute = $false
+                $psi.WorkingDirectory = Split-Path -Parent $filePath
+                $psi.Arguments = ($argList | ForEach-Object {
+                    if ($_ -match ' ') { '"{0}"' -f $_ } else { $_ }
+                }) -join ' '
+
+                $psi.EnvironmentVariables["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+                foreach ($k in @("_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
+                                 "_PYI_APPLICATION_HOME_DIR", "_PYI_SPLASH_IPC",
+                                 "_PYI_LINUX_PROCESS_NAME")) {
+                    if ($psi.EnvironmentVariables.ContainsKey($k)) {
+                        $psi.EnvironmentVariables.Remove($k)
+                    }
+                }
+
+                [System.Diagnostics.Process]::Start($psi) | Out-Null
             }
 
             try {
@@ -584,13 +618,13 @@ class SelfUpdater:
 
                 Set-UpdateStatus "pending_new_verify" "start_new_exe_verify" "启动新版程序进行自检" 75 "INFO"
                 $newVersion = Read-IniValue "Version" "new_version"
-                $verifyCode = Start-ProcWait $target @('--self-update-verify', '--expected-sha256', $newSha256, '--expected-version', $newVersion) 60
+                $verifyCode = Start-ProcWait $target @('--self-update-verify', '--expected-sha256', $newSha256, '--expected-version', $newVersion) 60 $true
                 if ($verifyCode -ne 0) {
                     Restore-Backup "verify failed: exit $verifyCode"
                 }
 
                 Set-UpdateStatus "verified" "start_normal_app" "新版验证通过，启动主程序" 100 "INFO"
-                Start-Process -FilePath $target
+                Start-CleanPyInstallerExe $target
                 exit 0
             } catch {
                 Write-Log "ERROR" "helper error: $($_.Exception.Message)"
