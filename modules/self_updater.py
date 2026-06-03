@@ -617,7 +617,7 @@ class SelfUpdater:
         """).lstrip("\n")
 
         script_path = script_dir / "M9A_Update_Assistant_Update.ps1"
-        script_path.write_text(ps1_content, encoding='utf-8')
+        script_path.write_text(ps1_content, encoding='utf-8-sig')
 
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
                              new_version: str, old_sha256: str,
