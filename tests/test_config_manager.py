@@ -101,7 +101,7 @@ m9a_folders =
         try:
             cm = ConfigManager(path, self.logger)
             self.assertEqual(cm.archive_folder_path, '存档文件夹')
-            self.assertEqual(cm.log_max_files, 15)
+            self.assertEqual(cm.log_max_files, 5)
             self.assertEqual(cm.github_repo, 'MAA1999/M9A')
             self.assertEqual(cm.github_release_version, 'preview')
             self.assertEqual(cm.github_proxy, '')

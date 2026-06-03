@@ -428,12 +428,10 @@ class SelfUpdater:
                 try {
                     $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
                     $sectionEsc = [regex]::Escape("[$section]")
-                    $keyEsc = [regex]::Escape($key)
-                    $sectionPattern = "(?ms)^$sectionEsc(?:(?!^\[).)*"
-                    $keyPattern = "^$keyEsc\s*=\s*.*?(\s*$)"
-                    $fullPattern = "($sectionPattern$keyPattern)"
-                    if ($content -match $fullPattern) {
-                        $newContent = $content -replace $fullPattern, "`${1}$value`${2}"
+                    $keyEsc = [regex]::Escape("$key")
+                    $pattern = "(?ms)($sectionEsc(?:(?!^\[).)*$keyEsc\s*=\s*).*?(\s*$)"
+                    if ($content -match $pattern) {
+                        $newContent = $content -replace $pattern, "`${1}$value`${2}"
                     } else {
                         $newContent = "$content`r`n$key = $value"
                     }
