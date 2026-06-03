@@ -74,7 +74,7 @@ if log_file.exists(): log_file.unlink()
 
 r = subprocess.run(
     ['powershell', '-NoP', '-Ep', 'Bypass', '-File', str(update_path)],
-    cwd=str(tmpdir), capture_output=True, text=True, timeout=15
+    cwd=str(tmpdir), capture_output=True, encoding='utf-8', timeout=15
 )
 print(f"  exit={r.returncode}")
 for l in r.stdout.splitlines():
@@ -130,7 +130,7 @@ if log_file.exists(): log_file.unlink()
 
 r = subprocess.run(
     ['powershell', '-NoP', '-Ep', 'Bypass', '-File', str(helper_path), '-ParentPid', '0'],
-    cwd=str(tmpdir), capture_output=True, text=True, timeout=30
+    cwd=str(tmpdir), capture_output=True, encoding='utf-8', timeout=30
 )
 l_ok = lock_file.exists()
 print(f"  exit={r.returncode}, lock={'OK' if l_ok else 'X'}")
