@@ -1,0 +1,35 @@
+name: Sandbox Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  sandbox:
+    name: PS1 Script Sandbox (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Check-out repository
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+          cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run PS1 Sandbox Tests
+        run: python sandbox/sandbox_ps1_test.py
+
+      - name: Run Empty INI Read Test
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File sandbox/test_empty_ini.ps1
