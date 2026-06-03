@@ -589,8 +589,13 @@ class SelfUpdater:
                         if ($_ -match ' ') { '"{0}"' -f $_ } else { $_ }
                     }) -join ' '
 
-                    Start-Process -FilePath $filePath -WorkingDirectory $workDir `
-                        -ArgumentList $argString -WindowStyle Normal
+                    $startParams = @{
+                        FilePath = $filePath
+                        WorkingDirectory = $workDir
+                        WindowStyle = 'Normal'
+                    }
+                    if ($argString) { $startParams['ArgumentList'] = $argString }
+                    Start-Process @startParams
                 }
                 finally {
                     [Environment]::SetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", $oldReset, "Process")

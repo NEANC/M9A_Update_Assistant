@@ -7,6 +7,7 @@ import shutil
 import sys
 
 import colorama
+import configparser
 
 from datetime import datetime
 from pathlib import Path
@@ -501,6 +502,38 @@ class M9AUpdateAssistant:
         )
 
 
+def _setup_mode_logger(log_prefix: str = "M9A_Mode"):
+    """为 CLI 模式设置日志（控制台 + 文件，不受 save_enabled 控制）"""
+    logger = logging.getLogger("M9AUpdateAssistant")
+    logger.setLevel(logging.DEBUG)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_formatter = ColoredFormatter(
+        '%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
+        datefmt='%H:%M:%S',
+    )
+    console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
+
+    try:
+        exe_dir = Path(sys.argv[0]).resolve().parent
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_path = exe_dir / f'{log_prefix}_{timestamp}.log'
+
+        file_handler = logging.FileHandler(str(log_path), encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        file_formatter = logging.Formatter(
+            '%(asctime)s | %(levelname)s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+        )
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
+        logger.info(f"日志文件已创建: {log_path}")
+    except Exception:
+        print(f"[警告] 无法创建日志文件，仅输出到控制台", file=sys.stderr)
+
+
 def _cleanup_update_residue(logger: logging.Logger) -> None:
     """清理上次成功更新后的残留文件"""
     state = UpdateState.load()
@@ -522,6 +555,10 @@ def _cleanup_update_residue(logger: logging.Logger) -> None:
             script_dir / "update_started.lock",
             script_dir / "update.log",
         ]
+        # 清理 CLI 模式诊断日志（自检、重试、失败）
+        for pattern in ("M9A_SelfUpdateVerify_*.log", "M9A_RetryUpdate_*.log", "M9A_UpdateFailed_*.log"):
+            for f in script_dir.glob(pattern):
+                cleanup_files.append(f)
         for f in cleanup_files:
             try:
                 if f.exists():
@@ -556,11 +593,13 @@ def main():
 
     # ── 新版验证模式 ──
     if '--self-update-verify' in sys.argv:
+        _setup_mode_logger('M9A_SelfUpdateVerify')
         exit_code = SelfUpdater.self_update_verify()
         sys.exit(exit_code)
 
     # ── 重试更新模式 ──
     if '--retry-update' in sys.argv:
+        _setup_mode_logger('M9A_RetryUpdate')
         logger = logging.getLogger("M9AUpdateAssistant")
         logger.info("正在重试自更新...")
         assistant = M9AUpdateAssistant()
@@ -573,6 +612,7 @@ def main():
     # ── 更新失败模式 ──
     if '--update-failed' in sys.argv:
         print_info()
+        _setup_mode_logger('M9A_UpdateFailed')
         logger = logging.getLogger("M9AUpdateAssistant")
         state = UpdateState.load()
         if state:
