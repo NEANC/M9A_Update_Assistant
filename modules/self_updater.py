@@ -584,7 +584,7 @@ class SelfUpdater:
 
                 Set-UpdateStatus "pending_new_verify" "start_new_exe_verify" "启动新版程序进行自检" 75 "INFO"
                 $newVersion = Read-IniValue "Version" "new_version"
-                $verifyCode = Start-ProcWait $target @('--self-update-verify', "--expected-sha256=$newSha256", "--expected-version=$newVersion") 60
+                $verifyCode = Start-ProcWait $target @('--self-update-verify', '--expected-sha256', $newSha256, '--expected-version', $newVersion) 60
                 if ($verifyCode -ne 0) {
                     Restore-Backup "verify failed: exit $verifyCode"
                 }
@@ -707,6 +707,21 @@ class SelfUpdater:
                 } catch {}
             }
 
+            function Move-WithRetry($src, $dst, $timeoutSec) {
+                $deadline = (Get-Date).AddSeconds($timeoutSec)
+                $lastError = $null
+                while ((Get-Date) -lt $deadline) {
+                    try {
+                        Move-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
+                        return
+                    } catch {
+                        $lastError = $_.Exception.Message
+                        Start-Sleep -Milliseconds 1000
+                    }
+                }
+                throw "Move failed after retry: $src -> $dst ; $lastError"
+            }
+
             try {
                 Set-UpdateStatus "replacing" "read_state" "读取更新状态文件" 35 "INFO"
 
@@ -735,11 +750,11 @@ class SelfUpdater:
 
                 if (Test-Path -LiteralPath $target) {
                     Set-UpdateStatus "replacing" "move_target_to_backup" "备份当前程序: $target -> $backup" 55 "INFO"
-                    Move-Item -LiteralPath $target -Destination $backup -Force -ErrorAction Stop
+                    Move-WithRetry $target $backup 60
                 }
 
                 Set-UpdateStatus "replacing" "move_new_to_target" "替换为新版本: $newFile -> $target" 60 "INFO"
-                Move-Item -LiteralPath $newFile -Destination $target -Force -ErrorAction Stop
+                Move-WithRetry $newFile $target 60
 
                 Set-UpdateStatus "replacing" "replace_done" "文件替换完成" 65 "INFO"
                 exit 0
