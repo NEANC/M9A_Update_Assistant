@@ -458,6 +458,9 @@ class SelfUpdater:
                     if (!(Test-Path -LiteralPath $backup)) {
                         Write-IniValue "State" "state" "failed_disabled"
                         Write-IniValue "State" "last_error" "backup not found: $backup"
+                        if (Test-Path -LiteralPath $target) {
+                            Start-Process -FilePath $target -ArgumentList "--update-failed"
+                        }
                         exit 2
                     }
 
