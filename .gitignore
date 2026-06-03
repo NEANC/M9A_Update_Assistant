@@ -189,3 +189,5 @@ cython_debug/
 # AI 生成文档
 gpt*.md
 ds*.md
+# 日志文件夹
+logs/

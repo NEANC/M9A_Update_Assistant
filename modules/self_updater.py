@@ -539,11 +539,13 @@ class SelfUpdater:
                 }
             }
 
-            function Start-ProcWait($filePath, $argList, $timeoutSec) {
+            function Start-ProcWait($filePath, [string[]]$argList, $timeoutSec) {
                 $psi = New-Object System.Diagnostics.ProcessStartInfo
                 $psi.FileName = $filePath
-                $psi.Arguments = $argList
                 $psi.UseShellExecute = $false
+                $psi.Arguments = ($argList | ForEach-Object {
+                    if ($_ -match ' ') { '"{0}"' -f $_ } else { $_ }
+                }) -join ' '
                 $proc = [System.Diagnostics.Process]::Start($psi)
                 if ($proc.WaitForExit($timeoutSec * 1000)) {
                     return $proc.ExitCode
@@ -565,8 +567,7 @@ class SelfUpdater:
                 }
 
                 Set-UpdateStatus "replacing" "run_update_script" "开始执行文件替换脚本" 30 "INFO"
-                $updateArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $updatePs1
-                $updateCode = Start-ProcWait "powershell.exe" $updateArgs 120
+                $updateCode = Start-ProcWait "powershell.exe" @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $updatePs1) 120
                 if ($updateCode -ne 0) {
                     Restore-Backup "update.ps1 failed: exit $updateCode"
                 }
@@ -583,8 +584,7 @@ class SelfUpdater:
 
                 Set-UpdateStatus "pending_new_verify" "start_new_exe_verify" "启动新版程序进行自检" 75 "INFO"
                 $newVersion = Read-IniValue "Version" "new_version"
-                $verifyArgs = '--self-update-verify --expected-sha256 "{0}" --expected-version "{1}"' -f $newSha256, $newVersion
-                $verifyCode = Start-ProcWait $target $verifyArgs 60
+                $verifyCode = Start-ProcWait $target @('--self-update-verify', "--expected-sha256=$newSha256", "--expected-version=$newVersion") 60
                 if ($verifyCode -ne 0) {
                     Restore-Backup "verify failed: exit $verifyCode"
                 }
