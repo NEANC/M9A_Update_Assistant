@@ -1,0 +1,6 @@
+# M9A Update Assistant 依赖
+
+-r requirements.txt
+
+# 用于单元测试
+pytest>=8.0

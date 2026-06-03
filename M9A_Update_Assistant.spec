@@ -1,20 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-import os
 
 block_cipher = None
 
-module_datas = []
-modules_dir = 'modules'
-for root, dirs, files in os.walk(modules_dir):
-    for f in files:
-        full = os.path.join(root, f)
-        module_datas.append((full, os.path.dirname(full)))
 
 a = Analysis(['M9A_Update_Assistant.py'],
              pathex=[],
              binaries=[],
-             datas=[] + module_datas,
+             datas=[],
              hiddenimports=['requests', 'socks', 'colorama',
                            'modules.config_manager',
                            'modules.github_release_client',

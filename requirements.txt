@@ -1,4 +1,5 @@
-# M9A Update Assistant 依赖项
+# M9A Update Assistant 运行依赖
+
 # 用于控制台彩色输出
 colorama>=0.4.6
 
@@ -7,6 +8,3 @@ requests>=2.32.3
 
 # 用于支持 SOCKS 代理
 PySocks>=1.7.1
-
-# 用于单元测试
-pytest>=8.0
