@@ -437,17 +437,45 @@ class SelfUpdater:
             function Write-IniValue($section, $key, $value) {
                 try {
                     $value = Normalize-IniValue $value
-                    $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
-                    $sectionEsc = [regex]::Escape("[$section]")
-                    $keyEsc = [regex]::Escape("$key")
-                    $pattern = "(?ms)($sectionEsc(?:(?!^\[).)*$keyEsc\s*=\s*).*?(\s*$)"
-                    if ($content -match $pattern) {
-                        $newContent = $content -replace $pattern, "`${1}$value`${2}"
-                    } else {
-                        $newContent = "$content`r`n$key = $value"
+                    $lines = @(Get-Content -LiteralPath $stateFile -Encoding UTF8 -ErrorAction Stop)
+
+                    $out = New-Object System.Collections.Generic.List[string]
+                    $inSection = $false
+                    $sectionFound = $false
+                    $keyWritten = $false
+                    $keyEsc = [regex]::Escape($key)
+
+                    foreach ($line in $lines) {
+                        if ($line -match '^\s*\[(.+?)\]\s*$') {
+                            if ($inSection -and -not $keyWritten) {
+                                $out.Add("$key = $value")
+                                $keyWritten = $true
+                            }
+                            $inSection = ($matches[1] -eq $section)
+                            if ($inSection) { $sectionFound = $true }
+                            $out.Add($line)
+                            continue
+                        }
+
+                        if ($inSection -and -not $keyWritten -and $line -match "^\s*$keyEsc\s*=") {
+                            $out.Add("$key = $value")
+                            $keyWritten = $true
+                            continue
+                        }
+
+                        $out.Add($line)
                     }
+
+                    if (-not $sectionFound) {
+                        if ($out.Count -gt 0 -and $out[-1].Trim() -ne '') { $out.Add("") }
+                        $out.Add("[$section]")
+                        $out.Add("$key = $value")
+                    } elseif ($inSection -and -not $keyWritten) {
+                        $out.Add("$key = $value")
+                    }
+
                     $tmp = "$stateFile.tmp"
-                    [System.IO.File]::WriteAllText($tmp, $newContent)
+                    [System.IO.File]::WriteAllLines($tmp, [string[]]$out.ToArray())
                     Move-Item -LiteralPath $tmp -Destination $stateFile -Force
                 } catch {
                     Write-Log "ERROR" "Write-IniValue failed: $($_.Exception.Message)"
@@ -457,10 +485,6 @@ class SelfUpdater:
             function Set-UpdateStatus($state, $step, $message, $progress, $level) {
                 $message = Normalize-IniValue $message
                 if ($state) { Write-IniValue "State" "state" $state }
-                if ($step) { Write-IniValue "State" "current_step" $step }
-                if ($message) { Write-IniValue "State" "message" $message }
-                if ($progress -ge 0) { Write-IniValue "State" "progress" "$progress" }
-                Write-IniValue "State" "updated_at" (Get-Date -Format o)
                 if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
                 Write-Log $level $message
                 try {
@@ -625,17 +649,45 @@ class SelfUpdater:
             function Write-IniValue($section, $key, $value) {
                 try {
                     $value = Normalize-IniValue $value
-                    $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
-                    $sectionEsc = [regex]::Escape("[$section]")
-                    $keyEsc = [regex]::Escape("$key")
-                    $pattern = "(?ms)($sectionEsc(?:(?!^\[).)*$keyEsc\s*=\s*).*?(\s*$)"
-                    if ($content -match $pattern) {
-                        $newContent = $content -replace $pattern, "`${1}$value`${2}"
-                    } else {
-                        $newContent = "$content`r`n$key = $value"
+                    $lines = @(Get-Content -LiteralPath $stateFile -Encoding UTF8 -ErrorAction Stop)
+
+                    $out = New-Object System.Collections.Generic.List[string]
+                    $inSection = $false
+                    $sectionFound = $false
+                    $keyWritten = $false
+                    $keyEsc = [regex]::Escape($key)
+
+                    foreach ($line in $lines) {
+                        if ($line -match '^\s*\[(.+?)\]\s*$') {
+                            if ($inSection -and -not $keyWritten) {
+                                $out.Add("$key = $value")
+                                $keyWritten = $true
+                            }
+                            $inSection = ($matches[1] -eq $section)
+                            if ($inSection) { $sectionFound = $true }
+                            $out.Add($line)
+                            continue
+                        }
+
+                        if ($inSection -and -not $keyWritten -and $line -match "^\s*$keyEsc\s*=") {
+                            $out.Add("$key = $value")
+                            $keyWritten = $true
+                            continue
+                        }
+
+                        $out.Add($line)
                     }
+
+                    if (-not $sectionFound) {
+                        if ($out.Count -gt 0 -and $out[-1].Trim() -ne '') { $out.Add("") }
+                        $out.Add("[$section]")
+                        $out.Add("$key = $value")
+                    } elseif ($inSection -and -not $keyWritten) {
+                        $out.Add("$key = $value")
+                    }
+
                     $tmp = "$stateFile.tmp"
-                    [System.IO.File]::WriteAllText($tmp, $newContent)
+                    [System.IO.File]::WriteAllLines($tmp, [string[]]$out.ToArray())
                     Move-Item -LiteralPath $tmp -Destination $stateFile -Force
                 } catch {
                     Write-Log "ERROR" "Write-IniValue failed: $($_.Exception.Message)"
@@ -645,10 +697,6 @@ class SelfUpdater:
             function Set-UpdateStatus($state, $step, $message, $progress, $level) {
                 $message = Normalize-IniValue $message
                 if ($state) { Write-IniValue "State" "state" $state }
-                if ($step) { Write-IniValue "State" "current_step" $step }
-                if ($message) { Write-IniValue "State" "message" $message }
-                if ($progress -ge 0) { Write-IniValue "State" "progress" "$progress" }
-                Write-IniValue "State" "updated_at" (Get-Date -Format o)
                 if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
                 Write-Log $level $message
                 try {

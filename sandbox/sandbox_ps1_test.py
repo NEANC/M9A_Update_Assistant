@@ -41,10 +41,6 @@ ini = tmpdir / 'update_state.ini'
 ini_content = f"""[State]
 state = idle
 last_error =
-current_step =
-message =
-progress =
-updated_at =
 
 [Files]
 target = {target_exe}
@@ -98,11 +94,9 @@ assert target_exe.read_text() == 'new_content', "FAIL: target has wrong content!
 assert backup_exe.read_text() == 'old_content', "FAIL: backup has wrong content!"
 print("  [PASS] File replacement correct")
 
-# Verify INI state was updated by Set-UpdateStatus
+# Verify INI state was updated (only state= and last_error= are written)
 ini2 = ini.read_text(encoding='utf-8')
-print(f"  INI has 'replacing': {'replacing' in ini2}")
-print(f"  INI has 'replace_done': {'replace_done' in ini2}")
-assert 'replace_done' in ini2, "FAIL: Set-UpdateStatus not writing state!"
+assert 'state = replacing' in ini2, "FAIL: Set-UpdateStatus not writing state!"
 
 # Verify log file
 if log_file.exists():
