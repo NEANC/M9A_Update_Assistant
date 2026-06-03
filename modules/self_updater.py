@@ -397,8 +397,9 @@ class SelfUpdater:
             #>
             param([int]$ParentPid)
 
-            $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-            $lockFile  = Join-Path $scriptDir "update_started.lock"
+            $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
+            $scriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
+            $lockFile   = Join-Path $scriptDir "update_started.lock"
 
             try { New-Item -Path $lockFile -ItemType File -Force | Out-Null } catch {}
 
@@ -406,9 +407,14 @@ class SelfUpdater:
             $logFile   = Join-Path $scriptDir "update.log"
             $updatePs1 = Join-Path $scriptDir "M9A_Update_Assistant_Update.ps1"
 
-            function Write-Log($msg) {
+            function Normalize-IniValue($value) {
+                if ($null -eq $value) { return "" }
+                return ([string]$value) -replace "(`r`n|`n|`r)", " "
+            }
+
+            function Write-Log($level, $message) {
                 try {
-                    $line = "$(Get-Date -Format o) $msg"
+                    $line = "{0} [{1}] [{2}] {3}" -f (Get-Date -Format o), $scriptName, $level, $message
                     Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
                 } catch {}
             }
@@ -418,14 +424,18 @@ class SelfUpdater:
                     $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
                     $sectionEsc = [regex]::Escape("[$section]")
                     $keyEsc = [regex]::Escape($key)
-                    $pattern = "(?ms)^$sectionEsc(?:(?!^\[).)*^$keyEsc\s*=\s*(.*?)\s*$"
-                    if ($content -match $pattern) { return $matches[1] }
+                    $sectionPattern = "(?ms)^$sectionEsc\s*\r?\n(.*?)(?=^\s*\[|\z)"
+                    if ($content -match $sectionPattern) {
+                        $keyPattern = "(?m)^$keyEsc\s*=\s*(.*?)[\r\t ]*$"
+                        if ($matches[1] -match $keyPattern) { return $matches[1] }
+                    }
                 } catch {}
                 return ""
             }
 
             function Write-IniValue($section, $key, $value) {
                 try {
+                    $value = Normalize-IniValue $value
                     $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
                     $sectionEsc = [regex]::Escape("[$section]")
                     $keyEsc = [regex]::Escape("$key")
@@ -439,8 +449,22 @@ class SelfUpdater:
                     [System.IO.File]::WriteAllText($tmp, $newContent)
                     Move-Item -LiteralPath $tmp -Destination $stateFile -Force
                 } catch {
-                    Write-Log "Write-IniValue failed: $($_.Exception.Message)"
+                    Write-Log "ERROR" "Write-IniValue failed: $($_.Exception.Message)"
                 }
+            }
+
+            function Set-UpdateStatus($state, $step, $message, $progress, $level) {
+                $message = Normalize-IniValue $message
+                if ($state) { Write-IniValue "State" "state" $state }
+                if ($step) { Write-IniValue "State" "current_step" $step }
+                if ($message) { Write-IniValue "State" "message" $message }
+                if ($progress -ge 0) { Write-IniValue "State" "progress" "$progress" }
+                Write-IniValue "State" "updated_at" (Get-Date -Format o)
+                if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
+                Write-Log $level "$state / $step / $message"
+                try {
+                    Write-Host ("[{0}] [{1}] {2} - {3}" -f (Get-Date -Format "HH:mm:ss"), $level, $step, $message)
+                } catch {}
             }
 
             function Get-RetryOrDefault($name, $default) {
@@ -450,14 +474,13 @@ class SelfUpdater:
             }
 
             function Restore-Backup($reason) {
-                Write-Log "rollback: $reason"
+                Set-UpdateStatus "rollback" "rollback_start" "准备回滚：$reason" 80 "ERROR"
                 try {
                     $target = Read-IniValue "Files" "target"
                     $backup = Read-IniValue "Files" "backup_file"
 
                     if (!(Test-Path -LiteralPath $backup)) {
-                        Write-IniValue "State" "state" "failed_disabled"
-                        Write-IniValue "State" "last_error" "backup not found: $backup"
+                        Set-UpdateStatus "failed_disabled" "rollback_no_backup" "备份文件不存在: $backup" 100 "ERROR"
                         if (Test-Path -LiteralPath $target) {
                             Start-Process -FilePath $target -ArgumentList "--update-failed"
                         }
@@ -468,8 +491,7 @@ class SelfUpdater:
                         Remove-Item -LiteralPath $target -Force -ErrorAction Stop
                     }
                     Move-Item -LiteralPath $backup -Destination $target -Force -ErrorAction Stop
-                    Write-IniValue "State" "state" "rollback_done"
-                    Write-IniValue "State" "last_error" $reason
+                    Set-UpdateStatus "rollback_done" "rollback_done" "已恢复旧版本：$reason" 100 "ERROR"
 
                     $retry = Get-RetryOrDefault "retry_count" 0
                     $max   = Get-RetryOrDefault "max_retry" 3
@@ -479,14 +501,12 @@ class SelfUpdater:
                     if ($retry -lt $max) {
                         Start-Process -FilePath $target -ArgumentList "--retry-update"
                     } else {
-                        Write-IniValue "State" "state" "failed_disabled"
+                        Set-UpdateStatus "failed_disabled" "retry_limit_reached" "更新失败次数达到上限，已禁用本版本更新" 100 "ERROR"
                         Start-Process -FilePath $target -ArgumentList "--update-failed"
                     }
                     exit 1
                 } catch {
-                    Write-Log "Restore-Backup failed: $($_.Exception.Message)"
-                    Write-IniValue "State" "state" "failed_disabled"
-                    Write-IniValue "State" "last_error" $_.Exception.Message
+                    Set-UpdateStatus "failed_disabled" "rollback_failed" "回滚失败: $($_.Exception.Message)" 100 "ERROR"
                     exit 3
                 }
             }
@@ -505,10 +525,10 @@ class SelfUpdater:
             }
 
             try {
-                Write-IniValue "State" "state" "helper_started"
-                Write-Log "helper started"
+                Set-UpdateStatus "helper_started" "helper_started" "更新 Helper 已启动" 10 "INFO"
 
                 if ($ParentPid -gt 0) {
+                    Set-UpdateStatus "helper_started" "wait_parent_exit" "等待主程序退出，PID: $ParentPid" 15 "INFO"
                     try { Wait-Process -Id $ParentPid -Timeout 60 -ErrorAction Stop }
                     catch {
                         $p = Get-Process -Id $ParentPid -ErrorAction SilentlyContinue
@@ -516,15 +536,14 @@ class SelfUpdater:
                     }
                 }
 
-                Write-IniValue "State" "state" "replacing"
-                Write-Log "running update.ps1"
-
+                Set-UpdateStatus "replacing" "run_update_script" "开始执行文件替换脚本" 30 "INFO"
                 $updateArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $updatePs1
                 $updateCode = Start-ProcWait "powershell.exe" $updateArgs 120
                 if ($updateCode -ne 0) {
                     Restore-Backup "update.ps1 failed: exit $updateCode"
                 }
 
+                Set-UpdateStatus "replacing" "verify_target_hash" "校验替换后的目标文件 SHA256" 60 "INFO"
                 $target    = Read-IniValue "Files" "target"
                 $newSha256 = Read-IniValue "Version" "new_sha256"
                 if ($newSha256) {
@@ -534,9 +553,7 @@ class SelfUpdater:
                     }
                 }
 
-                Write-IniValue "State" "state" "pending_new_verify"
-                Write-Log "starting new exe verify"
-
+                Set-UpdateStatus "pending_new_verify" "start_new_exe_verify" "启动新版程序进行自检" 75 "INFO"
                 $newVersion = Read-IniValue "Version" "new_version"
                 $verifyArgs = '--self-update-verify --expected-sha256 "{0}" --expected-version "{1}"' -f $newSha256, $newVersion
                 $verifyCode = Start-ProcWait $target $verifyArgs 60
@@ -544,12 +561,11 @@ class SelfUpdater:
                     Restore-Backup "verify failed: exit $verifyCode"
                 }
 
-                Write-IniValue "State" "state" "verified"
-                Write-Log "verified, starting normal app"
+                Set-UpdateStatus "verified" "start_normal_app" "新版验证通过，启动主程序" 100 "INFO"
                 Start-Process -FilePath $target
                 exit 0
             } catch {
-                Write-Log "helper error: $($_.Exception.Message)"
+                Write-Log "ERROR" "helper error: $($_.Exception.Message)"
                 Restore-Backup $_.Exception.Message
             }
         """).lstrip("\n")
@@ -571,34 +587,88 @@ class SelfUpdater:
                 M9A_Update_Assistant_Update
             .DESCRIPTION
                 替换 app.exe 为新版本：app.exe → app.backup.exe, app.new.exe → app.exe
-                不做 SHA256 校验，校验由 helper.ps1 负责
             #>
 
-            $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-            $stateFile = Join-Path $scriptDir "update_state.ini"
+            $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
+            $scriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
+            $stateFile  = Join-Path $scriptDir "update_state.ini"
+            $logFile    = Join-Path $scriptDir "update.log"
+
+            function Normalize-IniValue($value) {
+                if ($null -eq $value) { return "" }
+                return ([string]$value) -replace "(`r`n|`n|`r)", " "
+            }
+
+            function Write-Log($level, $message) {
+                try {
+                    $line = "{0} [{1}] [{2}] {3}" -f (Get-Date -Format o), $scriptName, $level, $message
+                    Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
+                } catch {}
+            }
 
             function Read-IniValue($section, $key) {
                 try {
                     $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
                     $sectionEsc = [regex]::Escape("[$section]")
                     $keyEsc = [regex]::Escape($key)
-                    $pattern = "(?ms)^$sectionEsc(?:(?!^\[).)*^$keyEsc\s*=\s*(.*?)\s*$"
-                    if ($content -match $pattern) { return $matches[1] }
+                    $sectionPattern = "(?ms)^$sectionEsc\s*\r?\n(.*?)(?=^\s*\[|\z)"
+                    if ($content -match $sectionPattern) {
+                        $keyPattern = "(?m)^$keyEsc\s*=\s*(.*?)[\r\t ]*$"
+                        if ($matches[1] -match $keyPattern) { return $matches[1] }
+                    }
                 } catch {}
                 return ""
             }
 
+            function Write-IniValue($section, $key, $value) {
+                try {
+                    $value = Normalize-IniValue $value
+                    $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
+                    $sectionEsc = [regex]::Escape("[$section]")
+                    $keyEsc = [regex]::Escape("$key")
+                    $pattern = "(?ms)($sectionEsc(?:(?!^\[).)*$keyEsc\s*=\s*).*?(\s*$)"
+                    if ($content -match $pattern) {
+                        $newContent = $content -replace $pattern, "`${1}$value`${2}"
+                    } else {
+                        $newContent = "$content`r`n$key = $value"
+                    }
+                    $tmp = "$stateFile.tmp"
+                    [System.IO.File]::WriteAllText($tmp, $newContent)
+                    Move-Item -LiteralPath $tmp -Destination $stateFile -Force
+                } catch {
+                    Write-Log "ERROR" "Write-IniValue failed: $($_.Exception.Message)"
+                }
+            }
+
+            function Set-UpdateStatus($state, $step, $message, $progress, $level) {
+                $message = Normalize-IniValue $message
+                if ($state) { Write-IniValue "State" "state" $state }
+                if ($step) { Write-IniValue "State" "current_step" $step }
+                if ($message) { Write-IniValue "State" "message" $message }
+                if ($progress -ge 0) { Write-IniValue "State" "progress" "$progress" }
+                Write-IniValue "State" "updated_at" (Get-Date -Format o)
+                if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
+                Write-Log $level "$state / $step / $message"
+                try {
+                    Write-Host ("[{0}] [{1}] {2} - {3}" -f (Get-Date -Format "HH:mm:ss"), $level, $step, $message)
+                } catch {}
+            }
+
             try {
-                $target  = Read-IniValue "Files" "target"
-                $newFile = Read-IniValue "Files" "new_file"
-                $backup  = Read-IniValue "Files" "backup_file"
+                Set-UpdateStatus "replacing" "read_state" "读取更新状态文件" 35 "INFO"
+
+                $target    = Read-IniValue "Files" "target"
+                $newFile   = Read-IniValue "Files" "new_file"
+                $backup    = Read-IniValue "Files" "backup_file"
                 $newSha256 = Read-IniValue "Version" "new_sha256"
 
+                Set-UpdateStatus "replacing" "check_new_file" "检查新版本文件是否存在: $newFile" 40 "INFO"
                 if (!(Test-Path -LiteralPath $newFile)) {
                     throw "new file not found: $newFile"
                 }
 
                 if ($newSha256) {
+                    Set-UpdateStatus "replacing" "verify_new_file_hash" "校验新版本文件 SHA256" 45 "INFO"
                     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $newFile).Hash.ToLowerInvariant()
                     if ($actual -ne $newSha256.ToLowerInvariant()) {
                         throw "new file SHA256 mismatch: expected $newSha256, got $actual"
@@ -606,14 +676,22 @@ class SelfUpdater:
                 }
 
                 if (Test-Path -LiteralPath $backup) {
-                    Remove-Item -LiteralPath $backup -Force
+                    Set-UpdateStatus "replacing" "remove_old_backup" "删除旧备份文件: $backup" 50 "INFO"
+                    Remove-Item -LiteralPath $backup -Force -ErrorAction Stop
                 }
+
                 if (Test-Path -LiteralPath $target) {
-                    Move-Item -LiteralPath $target -Destination $backup -Force
+                    Set-UpdateStatus "replacing" "move_target_to_backup" "备份当前程序: $target -> $backup" 55 "INFO"
+                    Move-Item -LiteralPath $target -Destination $backup -Force -ErrorAction Stop
                 }
-                Move-Item -LiteralPath $newFile -Destination $target -Force
+
+                Set-UpdateStatus "replacing" "move_new_to_target" "替换为新版本: $newFile -> $target" 60 "INFO"
+                Move-Item -LiteralPath $newFile -Destination $target -Force -ErrorAction Stop
+
+                Set-UpdateStatus "replacing" "replace_done" "文件替换完成" 65 "INFO"
                 exit 0
             } catch {
+                Set-UpdateStatus "failed_disabled" "replace_failed" "文件替换失败: $($_.Exception.Message)" 100 "ERROR"
                 Write-Error $_.Exception.Message
                 exit 1
             }

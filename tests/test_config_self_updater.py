@@ -40,6 +40,10 @@ class TestUpdateStateInit(unittest.TestCase):
         self.assertEqual(state["new_version"], "")
         self.assertEqual(state["old_sha256"], "")
         self.assertEqual(state["new_sha256"], "")
+        self.assertEqual(state["current_step"], "")
+        self.assertEqual(state["message"], "")
+        self.assertEqual(state["progress"], "")
+        self.assertEqual(state["updated_at"], "")
 
     def test_default_retry_values(self):
         """默认重试配置"""
