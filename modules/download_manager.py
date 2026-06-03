@@ -57,10 +57,12 @@ class DownloadManager:
         retry_interval = 10
 
         for attempt in range(max_retries):
+            file_name = Path(url).name
             if attempt == 0:
-                self.logger.info(f"开始下载文件: {url}")
+                self.logger.info(f"开始下载文件: {file_name}")
+                self.logger.debug(f"下载 URL: {url}")
             else:
-                self.logger.info(f"重试下载文件（{attempt}/{max_retries - 1}）: {url}")
+                self.logger.info(f"重试下载文件（{attempt}/{max_retries - 1}）: {file_name}")
 
             try:
                 Path(save_path).parent.mkdir(parents=True, exist_ok=True)

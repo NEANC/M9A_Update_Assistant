@@ -314,10 +314,12 @@ class SelfUpdater:
 
             max_retries = 3
             for attempt in range(max_retries):
+                file_name = Path(exe_url).name
                 if attempt > 0:
-                    self.logger.info(f"重试下载更新文件（{attempt + 1}/{max_retries}）")
+                    self.logger.info(f"重试下载更新文件（{attempt + 1}/{max_retries}）: {file_name}")
                 else:
-                    self.logger.debug(f"开始下载: {exe_url}")
+                    self.logger.info(f"开始下载更新文件: {file_name}")
+                self.logger.debug(f"下载 URL: {exe_url}")
 
                 if not download_manager.download_file_with_progress(exe_url, str(tmp_path)):
                     self.logger.error("下载失败")
