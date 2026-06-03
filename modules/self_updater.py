@@ -258,16 +258,19 @@ class SelfUpdater:
                 self.logger.info("当前为 Build 版本，跳过更新")
                 return False
 
-            if self._version_newer_than(current_version, latest_version):
-                self.logger.info(f"检测到新版本: {latest_version}")
-            else:
-                cur_tuple = self.version_to_tuple(current_version)
-                lat_tuple = self.version_to_tuple(latest_version)
-                if cur_tuple and lat_tuple:
-                    self.logger.info("当前版本已最新")
+            if not force:
+                if self._version_newer_than(current_version, latest_version):
+                    self.logger.info(f"检测到新版本: {latest_version}")
                 else:
-                    self.logger.error("版本号校验错误，跳过更新")
-                return False
+                    cur_tuple = self.version_to_tuple(current_version)
+                    lat_tuple = self.version_to_tuple(latest_version)
+                    if cur_tuple and lat_tuple:
+                        self.logger.info("当前版本已最新")
+                    else:
+                        self.logger.error("版本号校验错误，跳过更新")
+                    return False
+            else:
+                self.logger.info(f"强制更新模式，跳过版本比对，目标版本: {latest_version}")
 
             existing_state = UpdateState.load()
             if existing_state and existing_state.get("State", "state", fallback="") == "failed_disabled":
