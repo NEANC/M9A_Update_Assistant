@@ -3,13 +3,8 @@
 
 import logging
 import os
-import shutil
 import sys
 
-import colorama
-import configparser
-
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +14,11 @@ from modules.download_manager import DownloadManager
 from modules.zip_manager import ZipManager
 from modules.m9a_updater import M9AUpdater
 from modules.config_self_updater import UpdateState
+from modules.logger import (
+    setup_main_logger, should_save_logs,
+    add_file_logger, cleanup_old_logs,
+)
+from modules.logger_self_updater import setup_mode_logger, cleanup_update_residue
 from modules.self_updater import SelfUpdater
 from modules.version import VERSION
 
@@ -39,27 +39,6 @@ def print_info():
     print("\n")
 
 
-class ColoredFormatter(logging.Formatter):
-    """带颜色的日志格式化器，仅作用于控制台输出"""
-
-    LEVEL_COLORS = {
-        'DEBUG': colorama.Fore.CYAN,
-        'INFO': colorama.Fore.WHITE,
-        'WARNING': colorama.Fore.YELLOW,
-        'ERROR': colorama.Fore.RED,
-        'CRITICAL': colorama.Back.RED + colorama.Fore.BLACK + colorama.Style.BRIGHT,
-    }
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        colorama.init(autoreset=True)
-
-    def format(self, record: logging.LogRecord) -> str:
-        color = self.LEVEL_COLORS.get(record.levelname, colorama.Fore.WHITE)
-        result = super().format(record)
-        return f"{color}{result}{colorama.Style.RESET_ALL}"
-
-
 class M9AUpdateAssistant:
     """M9A 更新类，用于处理 M9A 的更新操作（编排器）"""
 
@@ -71,11 +50,11 @@ class M9AUpdateAssistant:
             config_file: 配置文件路径
         """
         self.config_file = config_file
-        self.logger = self._setup_logger()
+        self.logger = setup_main_logger()
         self.config = ConfigManager(config_file, self.logger)
 
-        if self._raw_read_save_enabled():
-            self.file_handler = self._add_file_logger()
+        if should_save_logs():
+            self.file_handler = add_file_logger(self.logger, VERSION)
         else:
             self.file_handler = None
 
@@ -102,78 +81,6 @@ class M9AUpdateAssistant:
         )
 
         self.keep_temp = False
-
-    def _setup_logger(self) -> logging.Logger:
-        """
-        设置日志记录器
-
-        Returns:
-            配置好的日志记录器
-        """
-        logger = logging.getLogger("M9AUpdateAssistant")
-        logger.setLevel(logging.DEBUG)
-
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        console_formatter = ColoredFormatter(
-            '%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
-            datefmt='%H:%M:%S',
-        )
-        console_handler.setFormatter(console_formatter)
-        logger.addHandler(console_handler)
-
-        return logger
-
-    def _raw_read_save_enabled(self) -> bool:
-        """在加载完整配置前，粗读配置文件判断是否启用日志保存"""
-        if not Path(self.config_file).exists():
-            return True
-        try:
-            import configparser
-            raw = configparser.ConfigParser()
-            raw.read(self.config_file, encoding='utf-8')
-            return raw.getboolean('Logs', 'save_enabled', fallback=True)
-        except Exception:
-            return True
-
-    def _add_file_logger(self) -> logging.FileHandler:
-        """添加文件日志记录器，始终挂载"""
-        log_dir = Path("logs")
-        log_dir.mkdir(exist_ok=True)
-
-        log_file = log_dir / f"M9A_Update_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter(
-            '%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S',
-        )
-        file_handler.setFormatter(formatter)
-        self.logger.addHandler(file_handler)
-
-        self.logger.debug(f"当前软件版本: {VERSION}")
-        self.logger.info(f"日志文件已创建: {log_file}")
-        return file_handler
-
-    def _cleanup_old_logs(self) -> None:
-        """清理多余的日志文件"""
-        log_dir = Path("logs")
-        if not log_dir.exists():
-            return
-
-        log_files = list(log_dir.glob("M9A_Update_*.log"))
-        if len(log_files) <= self.config.log_max_files:
-            return
-
-        log_files.sort(key=lambda x: x.stat().st_mtime)
-        files_to_delete = log_files[:-self.config.log_max_files]
-        for log_file in files_to_delete:
-            try:
-                log_file.unlink()
-                self.logger.info(f"已删除多余的日志文件: {log_file}")
-            except Exception as e:
-                self.logger.error(f"删除日志文件 {log_file} 失败: {e}")
 
     def validate_config(self) -> bool:
         """验证配置"""
@@ -373,7 +280,7 @@ class M9AUpdateAssistant:
         outdated_folders = self._collect_outdated_folders(latest_version)
         if not outdated_folders:
             self.logger.info("所有 M9A 已是最新版本，无需更新")
-            self._cleanup_old_logs()
+            cleanup_old_logs(self.logger, self.config.log_max_files)
             return True
 
         self.logger.info(f"共有 {len(outdated_folders)} 个 M9A 需要更新")
@@ -483,7 +390,7 @@ class M9AUpdateAssistant:
         elif not self._updater.clean_temp_folder(self.config.temp_folder):
             self.logger.warning("无法清理临时文件夹")
 
-        self._cleanup_old_logs()
+        cleanup_old_logs(self.logger, self.config.log_max_files)
 
         if all_success:
             self.logger.info("所有需要更新的 M9A 已完成更新")
@@ -502,104 +409,18 @@ class M9AUpdateAssistant:
         )
 
 
-def _setup_mode_logger(log_prefix: str = "M9A_Mode"):
-    """为 CLI 模式设置日志（控制台 + 文件，不受 save_enabled 控制）"""
-    logger = logging.getLogger("M9AUpdateAssistant")
-    logger.setLevel(logging.DEBUG)
-
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_formatter = ColoredFormatter(
-        '%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
-        datefmt='%H:%M:%S',
-    )
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
-
-    try:
-        exe_dir = Path(sys.argv[0]).resolve().parent
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        log_path = exe_dir / f'{log_prefix}_{timestamp}.log'
-
-        file_handler = logging.FileHandler(str(log_path), encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)
-        file_formatter = logging.Formatter(
-            '%(asctime)s | %(levelname)s | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S',
-        )
-        file_handler.setFormatter(file_formatter)
-        logger.addHandler(file_handler)
-        logger.info(f"日志文件已创建: {log_path}")
-    except Exception:
-        print(f"[警告] 无法创建日志文件，仅输出到控制台", file=sys.stderr)
-
-
-def _cleanup_update_residue(logger: logging.Logger) -> None:
-    """清理上次成功更新后的残留文件"""
-    state = UpdateState.load()
-    if not state:
-        return
-
-    current_state = state.get("State", "state", fallback="")
-
-    if current_state == "verified":
-        logger.info("清理上次更新残留文件...")
-        target_path = Path(state["target"])
-        script_dir = target_path.parent
-
-        cleanup_files = [
-            Path(state["backup_file"]),
-            script_dir / f"{target_path.stem}.old.exe",
-            script_dir / "M9A_Update_Assistant_Update_Helper.ps1",
-            script_dir / "M9A_Update_Assistant_Update.ps1",
-            script_dir / "update_started.lock",
-            script_dir / "update.log",
-        ]
-        # 清理 CLI 模式诊断日志（自检、重试、失败）
-        for pattern in ("M9A_SelfUpdateVerify_*.log", "M9A_RetryUpdate_*.log", "M9A_UpdateFailed_*.log"):
-            for f in script_dir.glob(pattern):
-                cleanup_files.append(f)
-        for f in cleanup_files:
-            try:
-                if f.exists():
-                    f.unlink()
-                    logger.debug(f"已删除残留文件: {f}")
-            except OSError:
-                pass
-
-        state.delete()
-        logger.info("残留文件清理完成")
-    elif current_state in ("helper_started", "replacing", "pending_new_verify", "rollback"):
-        logger.warning("检测到上次更新未完成，尝试恢复...")
-        backup_file = Path(state["backup_file"])
-        target = Path(state["target"])
-        if backup_file.exists() and not target.exists():
-            shutil.move(str(backup_file), str(target))
-            logger.info("已从备份恢复")
-        state.delete()
-
-    elif current_state == "rollback_done":
-        logger.info("检测到上次更新回滚完成，清理状态文件")
-        state.delete()
-
-    elif current_state == "failed_disabled":
-        failed_ver = state["new_version"]
-        logger.warning(f"自更新已禁用：版本 {failed_ver} 多次验证失败")
-        logger.warning(f"将跳过版本 {failed_ver} 的自动更新，等待远端发布新版本")
-
-
 def main():
     """主函数"""
 
     # ── 新版验证模式 ──
     if '--self-update-verify' in sys.argv:
-        _setup_mode_logger('M9A_SelfUpdateVerify')
+        setup_mode_logger('M9A_SelfUpdateVerify')
         exit_code = SelfUpdater.self_update_verify()
         sys.exit(exit_code)
 
     # ── 重试更新模式 ──
     if '--retry-update' in sys.argv:
-        _setup_mode_logger('M9A_RetryUpdate')
+        setup_mode_logger('M9A_RetryUpdate')
         logger = logging.getLogger("M9AUpdateAssistant")
         logger.info("正在重试自更新...")
         assistant = M9AUpdateAssistant()
@@ -612,7 +433,7 @@ def main():
     # ── 更新失败模式 ──
     if '--update-failed' in sys.argv:
         print_info()
-        _setup_mode_logger('M9A_UpdateFailed')
+        setup_mode_logger('M9A_UpdateFailed')
         logger = logging.getLogger("M9AUpdateAssistant")
         state = UpdateState.load()
         if state:
@@ -627,7 +448,7 @@ def main():
         return
 
     # ── 正常启动：清理上次更新残留 ──
-    _cleanup_update_residue(logging.getLogger("M9AUpdateAssistant"))
+    cleanup_update_residue(logging.getLogger("M9AUpdateAssistant"))
 
     # ── 仅检查自身更新模式 ──
     if any(flag in sys.argv for flag in ('-U', '--update', '--Update')):

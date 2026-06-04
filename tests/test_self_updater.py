@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater, _get_existing_retry_count
-from M9A_Update_Assistant import _cleanup_update_residue
+from modules.logger_self_updater import cleanup_update_residue
 
 
 class TestGetExePath(unittest.TestCase):
@@ -623,7 +623,7 @@ class TestSelfUpdateVerify(unittest.TestCase):
 
 
 class TestCleanupUpdateResidue(unittest.TestCase):
-    """_cleanup_update_residue 测试"""
+    """cleanup_update_residue 测试"""
 
     def setUp(self):
         _suppress_logs()
@@ -639,7 +639,7 @@ class TestCleanupUpdateResidue(unittest.TestCase):
 
     def test_no_state_file(self):
         """无状态文件时静默返回"""
-        _cleanup_update_residue(self.logger)
+        cleanup_update_residue(self.logger)
 
     def test_rollback_done_cleans_state(self):
         """rollback_done 状态 → 清理状态文件"""
@@ -647,7 +647,7 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         state["state"] = "rollback_done"
         state.save()
 
-        _cleanup_update_residue(self.logger)
+        cleanup_update_residue(self.logger)
         self.assertIsNone(UpdateState.load())
 
     def test_failed_disabled_keeps_state(self):
@@ -657,7 +657,7 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         state["new_version"] = "v2.0.0"
         state.save()
 
-        _cleanup_update_residue(self.logger)
+        cleanup_update_residue(self.logger)
         loaded = UpdateState.load()
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded["state"], "failed_disabled")
@@ -676,7 +676,7 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         state["backup_file"] = backup
         state.save()
 
-        _cleanup_update_residue(self.logger)
+        cleanup_update_residue(self.logger)
         self.assertFalse(os.path.exists(backup))
         self.assertFalse(os.path.exists(old_exe))
         self.assertIsNone(UpdateState.load())
@@ -693,7 +693,7 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         state["backup_file"] = backup_file
         state.save()
 
-        _cleanup_update_residue(self.logger)
+        cleanup_update_residue(self.logger)
         self.assertTrue(os.path.exists(target))
         with open(target, 'r') as f:
             self.assertEqual(f.read(), "old binary")
