@@ -184,7 +184,7 @@ class TestCheckSelfUpdate(unittest.TestCase):
 
         self.logger = logging.getLogger("TestSelfUpdate")
         self.logger.setLevel(logging.CRITICAL)
-        self.su = SelfUpdater('', '/tmp', self.logger)
+        self.su = SelfUpdater('', self.tmpdir, self.logger)
 
     def tearDown(self):
         sys.argv[0] = self.original_argv0
@@ -229,6 +229,91 @@ class TestCheckSelfUpdate(unittest.TestCase):
 
         result = self.su.check_self_update('v0.0.1-build.gb6da5ee', gh, dm, zm)
         self.assertFalse(result)
+
+    @mock.patch('modules.self_updater.requests.get')
+    @mock.patch('modules.self_updater.SelfUpdater.detect_package_type')
+    def test_force_skips_build_tag_check(self, mock_detect, mock_get):
+        """force=True 跳过 Build 版本检查，直接进入版本比对"""
+        mock_detect.return_value = (True, 'Nuitka')
+        mock_response = mock.MagicMock()
+        # preview 通道用 /releases API，返回数组
+        mock_response.json.return_value = [{
+            'tag_name': 'v2.0.0',
+            'draft': False,
+            'assets': [{
+                'name': 'M9A_Update_Assistant-Nuitka-v2.0.0.exe',
+                'browser_download_url': 'https://url/exe',
+                'digest': 'sha256:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899',
+            }],
+        }]
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        from modules.github_release_client import GitHubReleaseClient
+        from modules.download_manager import DownloadManager
+        from modules.zip_manager import ZipManager
+
+        gh = GitHubReleaseClient('test/repo', 'latest', '', self.logger)
+        dm = DownloadManager('', self.tmpdir, self.logger)
+        zm = ZipManager(self.logger)
+
+        with mock.patch.object(self.su, '_is_build_tag', wraps=self.su._is_build_tag) as mock_is_build:
+            with mock.patch.object(self.su, '_version_newer_than', return_value=True):
+                with mock.patch.object(self.su, '_fetch_current_release_sha256', return_value=''):
+                    with mock.patch.object(dm, 'download_file_with_progress', return_value=True):
+                        with mock.patch.object(zm, 'verify_file_sha256', return_value=True):
+                            with mock.patch.object(self.su, '_replace_executable'):
+                                result = self.su.check_self_update(
+                                    'v0.0.1-build.gb6da5ee', gh, dm, zm, force=True,
+                                )
+                                self.assertTrue(result)
+                                # force=True bypasses _is_build_tag check entirely
+                                mock_is_build.assert_not_called()
+
+    @mock.patch('modules.self_updater.requests.get')
+    @mock.patch('modules.self_updater.SelfUpdater.detect_package_type')
+    def test_force_skips_version_comparison(self, mock_detect, mock_get):
+        """force=True 跳过版本比对，同版本也会继续"""
+        mock_detect.return_value = (True, 'Nuitka')
+        mock_response = mock.MagicMock()
+        mock_response.json.return_value = [{
+            'tag_name': 'v1.0.0',
+            'draft': False,
+            'assets': [{
+                'name': 'M9A_Update_Assistant-Nuitka-v1.0.0.exe',
+                'browser_download_url': 'https://url/exe',
+                'digest': 'sha256:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899',
+            }],
+        }]
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        from modules.github_release_client import GitHubReleaseClient
+        from modules.download_manager import DownloadManager
+        from modules.zip_manager import ZipManager
+
+        gh = GitHubReleaseClient('test/repo', 'latest', '', self.logger)
+        dm = DownloadManager('', self.tmpdir, self.logger)
+        zm = ZipManager(self.logger)
+
+        with mock.patch.object(self.su, '_version_newer_than', wraps=self.su._version_newer_than) as mock_vnt:
+            with mock.patch.object(self.su, '_fetch_current_release_sha256', return_value=''):
+                with mock.patch.object(dm, 'download_file_with_progress', return_value=True):
+                    with mock.patch.object(zm, 'verify_file_sha256', return_value=True):
+                        with mock.patch.object(self.su, '_replace_executable'):
+                            result = self.su.check_self_update(
+                                'v1.0.0', gh, dm, zm, force=True,
+                            )
+                            self.assertTrue(result)
+                            # force=True bypasses _version_newer_than
+                            mock_vnt.assert_not_called()
+
+    def test_force_without_special_args_defaults_false(self):
+        """不传 force 参数时默认为 False"""
+        # 直接从函数签名验证
+        import inspect
+        sig = inspect.signature(self.su.check_self_update)
+        self.assertEqual(sig.parameters['force'].default, False)
 
     @mock.patch('modules.self_updater.requests.get')
     @mock.patch('modules.self_updater.SelfUpdater.detect_package_type')
@@ -520,7 +605,7 @@ class TestSelfUpdateVerify(unittest.TestCase):
     def test_passes_with_valid_state(self, mock_exe_path):
         """SHA256 和版本号均匹配且核心模块可导入 → 返回 0"""
         from modules.zip_manager import ZipManager
-        import M9A_Update_Assistant as app_module
+        from modules.version import VERSION
 
         exe_path = os.path.join(self.tmpdir, "test_app.exe")
         Path(exe_path).write_text("binary content")
@@ -530,7 +615,7 @@ class TestSelfUpdateVerify(unittest.TestCase):
 
         state = UpdateState()
         state["new_sha256"] = actual_sha
-        state["new_version"] = app_module.VERSION
+        state["new_version"] = VERSION
         state.save()
 
         code = SelfUpdater.self_update_verify()

@@ -258,16 +258,19 @@ class SelfUpdater:
                 self.logger.info("当前为 Build 版本，跳过更新")
                 return False
 
-            if self._version_newer_than(current_version, latest_version):
-                self.logger.info(f"检测到新版本: {latest_version}")
-            else:
-                cur_tuple = self.version_to_tuple(current_version)
-                lat_tuple = self.version_to_tuple(latest_version)
-                if cur_tuple and lat_tuple:
-                    self.logger.info("当前版本已最新")
+            if not force:
+                if self._version_newer_than(current_version, latest_version):
+                    self.logger.info(f"检测到新版本: {latest_version}")
                 else:
-                    self.logger.error("版本号校验错误，跳过更新")
-                return False
+                    cur_tuple = self.version_to_tuple(current_version)
+                    lat_tuple = self.version_to_tuple(latest_version)
+                    if cur_tuple and lat_tuple:
+                        self.logger.info("当前版本已最新")
+                    else:
+                        self.logger.error("版本号校验错误，跳过更新")
+                    return False
+            else:
+                self.logger.info(f"强制更新模式，跳过版本比对，目标版本: {latest_version}")
 
             existing_state = UpdateState.load()
             if existing_state and existing_state.get("State", "state", fallback="") == "failed_disabled":
@@ -507,7 +510,7 @@ class SelfUpdater:
                     if (!(Test-Path -LiteralPath $backup)) {
                         Set-UpdateStatus "failed_disabled" "rollback_no_backup" "备份文件不存在: $backup" 100 "ERROR"
                         if (Test-Path -LiteralPath $target) {
-                            Start-Process -FilePath $target -ArgumentList "--update-failed"
+                            Start-NormalAppVisible $target @('--update-failed')
                         }
                         exit 2
                     }
@@ -524,10 +527,10 @@ class SelfUpdater:
                     Write-IniValue "Retry" "retry_count" "$retry"
 
                     if ($retry -lt $max) {
-                        Start-Process -FilePath $target -ArgumentList "--retry-update"
+                        Start-NormalAppVisible $target @('--retry-update')
                     } else {
                         Set-UpdateStatus "failed_disabled" "retry_limit_reached" "更新失败次数达到上限，已禁用本版本更新" 100 "ERROR"
-                        Start-Process -FilePath $target -ArgumentList "--update-failed"
+                        Start-NormalAppVisible $target @('--update-failed')
                     }
                     exit 1
                 } catch {
@@ -536,17 +539,65 @@ class SelfUpdater:
                 }
             }
 
-            function Start-ProcWait($filePath, $argList, $timeoutSec) {
+            function Start-ProcWait($filePath, [string[]]$argList, $timeoutSec, [bool]$resetPyInstallerEnv = $false) {
                 $psi = New-Object System.Diagnostics.ProcessStartInfo
                 $psi.FileName = $filePath
-                $psi.Arguments = $argList
                 $psi.UseShellExecute = $false
+                $psi.WorkingDirectory = Split-Path -Parent $filePath
+                $psi.Arguments = ($argList | ForEach-Object {
+                    if ($_ -match ' ') { '"{0}"' -f $_ } else { $_ }
+                }) -join ' '
+
+                if ($resetPyInstallerEnv) {
+                    $psi.EnvironmentVariables["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+                    foreach ($k in @("_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
+                                     "_PYI_APPLICATION_HOME_DIR", "_PYI_SPLASH_IPC",
+                                     "_PYI_LINUX_PROCESS_NAME")) {
+                        if ($psi.EnvironmentVariables.ContainsKey($k)) {
+                            $psi.EnvironmentVariables.Remove($k)
+                        }
+                    }
+                }
+
                 $proc = [System.Diagnostics.Process]::Start($psi)
                 if ($proc.WaitForExit($timeoutSec * 1000)) {
                     return $proc.ExitCode
                 }
                 try { $proc.Kill() } catch {}
                 return -1
+            }
+
+            function Start-NormalAppVisible($filePath, [string[]]$argList = @()) {
+                $workDir = Split-Path -Parent $filePath
+
+                $oldReset = [Environment]::GetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", "Process")
+                $oldPyi = @{}
+                $pyiKeys = @("_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
+                             "_PYI_APPLICATION_HOME_DIR", "_PYI_SPLASH_IPC",
+                             "_PYI_LINUX_PROCESS_NAME")
+                foreach ($k in $pyiKeys) {
+                    $oldPyi[$k] = [Environment]::GetEnvironmentVariable($k, "Process")
+                }
+
+                try {
+                    [Environment]::SetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", "1", "Process")
+                    foreach ($k in $pyiKeys) {
+                        [Environment]::SetEnvironmentVariable($k, $null, "Process")
+                    }
+
+                    $argString = ($argList | ForEach-Object {
+                        if ($_ -match ' ') { '"{0}"' -f $_ } else { $_ }
+                    }) -join ' '
+
+                    Start-Process -FilePath $filePath -WorkingDirectory $workDir `
+                        -ArgumentList $argString -WindowStyle Normal
+                }
+                finally {
+                    [Environment]::SetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", $oldReset, "Process")
+                    foreach ($k in $pyiKeys) {
+                        [Environment]::SetEnvironmentVariable($k, $oldPyi[$k], "Process")
+                    }
+                }
             }
 
             try {
@@ -562,8 +613,7 @@ class SelfUpdater:
                 }
 
                 Set-UpdateStatus "replacing" "run_update_script" "开始执行文件替换脚本" 30 "INFO"
-                $updateArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $updatePs1
-                $updateCode = Start-ProcWait "powershell.exe" $updateArgs 120
+                $updateCode = Start-ProcWait "powershell.exe" @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $updatePs1) 120
                 if ($updateCode -ne 0) {
                     Restore-Backup "update.ps1 failed: exit $updateCode"
                 }
@@ -580,14 +630,13 @@ class SelfUpdater:
 
                 Set-UpdateStatus "pending_new_verify" "start_new_exe_verify" "启动新版程序进行自检" 75 "INFO"
                 $newVersion = Read-IniValue "Version" "new_version"
-                $verifyArgs = '--self-update-verify --expected-sha256 "{0}" --expected-version "{1}"' -f $newSha256, $newVersion
-                $verifyCode = Start-ProcWait $target $verifyArgs 60
+                $verifyCode = Start-ProcWait $target @('--self-update-verify', '--expected-sha256', $newSha256, '--expected-version', $newVersion) 60 $true
                 if ($verifyCode -ne 0) {
                     Restore-Backup "verify failed: exit $verifyCode"
                 }
 
                 Set-UpdateStatus "verified" "start_normal_app" "新版验证通过，启动主程序" 100 "INFO"
-                Start-Process -FilePath $target
+                Start-NormalAppVisible $target
                 exit 0
             } catch {
                 Write-Log "ERROR" "helper error: $($_.Exception.Message)"
@@ -704,6 +753,21 @@ class SelfUpdater:
                 } catch {}
             }
 
+            function Move-WithRetry($src, $dst, $timeoutSec) {
+                $deadline = (Get-Date).AddSeconds($timeoutSec)
+                $lastError = $null
+                while ((Get-Date) -lt $deadline) {
+                    try {
+                        Move-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
+                        return
+                    } catch {
+                        $lastError = $_.Exception.Message
+                        Start-Sleep -Milliseconds 1000
+                    }
+                }
+                throw "Move failed after retry: $src -> $dst ; $lastError"
+            }
+
             try {
                 Set-UpdateStatus "replacing" "read_state" "读取更新状态文件" 35 "INFO"
 
@@ -732,11 +796,11 @@ class SelfUpdater:
 
                 if (Test-Path -LiteralPath $target) {
                     Set-UpdateStatus "replacing" "move_target_to_backup" "备份当前程序: $target -> $backup" 55 "INFO"
-                    Move-Item -LiteralPath $target -Destination $backup -Force -ErrorAction Stop
+                    Move-WithRetry $target $backup 60
                 }
 
                 Set-UpdateStatus "replacing" "move_new_to_target" "替换为新版本: $newFile -> $target" 60 "INFO"
-                Move-Item -LiteralPath $newFile -Destination $target -Force -ErrorAction Stop
+                Move-WithRetry $newFile $target 60
 
                 Set-UpdateStatus "replacing" "replace_done" "文件替换完成" 65 "INFO"
                 exit 0
@@ -772,8 +836,7 @@ class SelfUpdater:
         self.logger.info(f"新版本已暂存: {new_exe}")
 
         try:
-            import M9A_Update_Assistant as app_module
-            old_version = app_module.VERSION
+            from modules.version import VERSION as old_version
         except ImportError:
             old_version = ""
 
@@ -867,12 +930,12 @@ class SelfUpdater:
             )
             return 2
 
-        import M9A_Update_Assistant as app_module
-        if new_version and app_module.VERSION != new_version:
+        from modules.version import VERSION as actual_version
+        if new_version and actual_version != new_version:
             logger.critical(
                 f"版本号不匹配: \n"
                 f"GitHub: {new_version}\n"
-                f"本地:   {app_module.VERSION}")
+                f"本地:   {actual_version}")
             return 3
 
         try:

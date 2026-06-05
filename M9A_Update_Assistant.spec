@@ -1,27 +1,36 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import fnmatch
+
+
+def _filter_binaries(toc, patterns):
+    """从 TOC 中移除文件名匹配 patterns 的二进制文件（仅排除来自非系统的路径）"""
+    filtered = []
+    for item in toc:
+        dest_name = os.path.basename(item[0]).lower()
+        src_path = item[1]
+        if any(fnmatch.fnmatch(dest_name, p) for p in patterns):
+            if 'Java' in src_path or 'temurin' in src_path.lower():
+                continue
+        filtered.append(item)
+    return filtered
+
 
 block_cipher = None
 
-module_datas = []
-modules_dir = 'modules'
-for root, dirs, files in os.walk(modules_dir):
-    for f in files:
-        full = os.path.join(root, f)
-        module_datas.append((full, os.path.dirname(full)))
 
 a = Analysis(['M9A_Update_Assistant.py'],
              pathex=[],
              binaries=[],
-             datas=[] + module_datas,
+             datas=[],
              hiddenimports=['requests', 'socks', 'colorama',
-                           'modules.config_manager',
-                           'modules.github_release_client',
-                           'modules.download_manager',
-                           'modules.zip_manager',
-                           'modules.m9a_updater',
-                           'modules.self_updater'],
+                            'modules.config_manager',
+                            'modules.github_release_client',
+                            'modules.download_manager',
+                            'modules.zip_manager',
+                            'modules.m9a_updater',
+                            'modules.self_updater'],
              hookspath=[],
              runtime_hooks=[],
              excludes=[
@@ -67,6 +76,7 @@ a = Analysis(['M9A_Update_Assistant.py'],
                  'pickle',
                  'pickleshare',
                  'PIL',
+                 'pip',
                  'pkg_resources',
                  'prompt_toolkit',
                  'psutil',
@@ -107,6 +117,14 @@ a = Analysis(['M9A_Update_Assistant.py'],
              win_private_assemblies=False,
              cipher=block_cipher,
              noarchive=False)
+
+# 过滤 runner 环境泄漏的 JDK/系统 DLL（api-ms-win-*, ucrtbase）
+# VCRUNTIME140.dll 保留不过滤，保证用户端兼容性
+a.binaries = _filter_binaries(
+    a.binaries,
+    ['api-ms-win-*.dll', 'ucrtbase.dll'],
+)
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 
