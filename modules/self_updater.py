@@ -305,8 +305,8 @@ class SelfUpdater:
                 actual_current = ZipManager.calculate_sha256(str(current_exe))
                 if actual_current != old_sha256:
                     self.logger.critical("当前程序 SHA256 与 GitHub 记录不一致，放弃更新")
-                    self.logger.warning(f"GitHub: {old_sha256[:16]}...")
-                    self.logger.warning(f"本地:   {actual_current[:16]}...")
+                    self.logger.warning(f"GitHub: {old_sha256}")
+                    self.logger.warning(f"本地:   {actual_current}")
                     return False
                 self.logger.info("当前版本 SHA256 校验通过")
             else:
@@ -925,8 +925,8 @@ class SelfUpdater:
         if expected_sha256 and actual_sha256 != expected_sha256:
             logger.critical(
                 f"SHA256 不匹配: \n"
-                f"GitHub: {expected_sha256[:16]}\n"
-                f"本地:   {actual_sha256[:16]}"
+                f"GitHub: {expected_sha256}\n"
+                f"本地:   {actual_sha256}"
             )
             return 2
 
