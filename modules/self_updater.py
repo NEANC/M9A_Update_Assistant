@@ -585,9 +585,9 @@ class SelfUpdater:
                         [Environment]::SetEnvironmentVariable($k, $null, "Process")
                     }
 
-                    $argString = ($argList | ForEach-Object {
+                    $argString = [string](($argList | ForEach-Object {
                         if ($_ -match ' ') { '"{0}"' -f $_ } else { $_ }
-                    }) -join ' '
+                    }) -join ' ')
 
                     Start-Process -FilePath $filePath -WorkingDirectory $workDir `
                         -ArgumentList $argString -WindowStyle Normal
