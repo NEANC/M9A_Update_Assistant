@@ -579,7 +579,8 @@ def main():
             failed_ver = state["new_version"]
             logger.critical(f"自更新失败：版本 {failed_ver} 多次验证不通过")
             print(f"\n软件自动更新失败，版本 {failed_ver} 已被标记为不可用。")
-            print("当前版本可继续使用，后续将跳过此版本的自动更新。")
+            print(f"您可以向开发人员提交 {script_dir / 'update.log'} 反馈此问题。")
+            print(f"已回退到 {VERSION} 版本，后续将跳过 {failed_ver} 版本的自动更新。")
         else:
             logger.critical("自更新失败，但无法读取状态信息")
         print(f"\n按任意键退出...")
