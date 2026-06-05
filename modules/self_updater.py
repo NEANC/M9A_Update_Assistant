@@ -288,7 +288,7 @@ class SelfUpdater:
             temp_dir = Path(self.temp_folder)
             cache_dir = temp_dir / "UpdateCache" / "installs" / latest_version
             cache_dir.mkdir(parents=True, exist_ok=True)
-            tmp_path = cache_dir / f"M9A_Update_Assistant-{latest_version}.exe.tmp"
+            tmp_path = cache_dir / f"M9A_Update_Assistant-{latest_version}.exe"
             sha_path = cache_dir / f"M9A_Update_Assistant-{latest_version}.sha256"
 
             new_sha256 = gh_client.get_asset_sha256(release_info, exe_name)
