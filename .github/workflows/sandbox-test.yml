@@ -9,8 +9,16 @@ on:
 
 jobs:
   sandbox:
-    name: PS1 Script Sandbox (Windows)
+    name: PS1 Script Sandbox (PowerShell ${{ matrix.pwsh_label }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pwsh_exe: powershell
+            pwsh_label: '5.1'
+          - pwsh_exe: pwsh
+            pwsh_label: '7'
     env:
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: '1'
@@ -32,7 +40,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run PS1 Sandbox Tests
-        run: python sandbox/sandbox_ps1_test.py
+        run: python sandbox/sandbox_ps1_test.py --pwsh ${{ matrix.pwsh_exe }}
 
       - name: Run Empty INI Read Test
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File sandbox/test_empty_ini.ps1
+        run: ${{ matrix.pwsh_exe }} -NoProfile -ExecutionPolicy Bypass -File sandbox/test_empty_ini.ps1

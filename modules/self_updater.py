@@ -428,6 +428,23 @@ class SelfUpdater:
                 return ([string]$value) -replace "(`r`n|`n|`r)", " "
             }
 
+            function Quote-Arg($arg) {
+                if ($null -eq $arg) { return '""' }
+                $s = [string]$arg
+                $s = $s -replace '\\(?=")', '\\'
+                $s = $s -replace '"', '\"'
+                if ($s -match '\s' -or $s -eq '') {
+                    return '"' + $s + '"'
+                }
+                return $s
+            }
+
+            function Assert-NotEmpty($name, $value) {
+                if ([string]::IsNullOrWhiteSpace($value)) {
+                    throw "missing required ini value: $name"
+                }
+            }
+
             function Write-Log($level, $message) {
                 try {
                     $line = "{0} -> {1} | {2} | {3}" -f $scriptTag, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $level, $message
@@ -500,6 +517,11 @@ class SelfUpdater:
             function Set-UpdateStatus($state, $step, $message, $progress, $level) {
                 $message = Normalize-IniValue $message
                 if ($state) { Write-IniValue "State" "state" $state }
+                if ($step) { Write-IniValue "State" "step" $step }
+                if ($null -ne $progress) { Write-IniValue "State" "progress" "$progress" }
+                if ($level) { Write-IniValue "State" "level" $level }
+                Write-IniValue "State" "message" $message
+                Write-IniValue "State" "updated_at" (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')
                 if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
                 Write-Log $level $message
                 try {
@@ -513,11 +535,64 @@ class SelfUpdater:
                 return $default
             }
 
+            function Remove-WithRetry($path, $timeoutSec) {
+                $deadline = (Get-Date).AddSeconds($timeoutSec)
+                $lastError = $null
+                while ((Get-Date) -lt $deadline) {
+                    try {
+                        if (Test-Path -LiteralPath $path) {
+                            Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+                        }
+                        return
+                    } catch {
+                        $lastError = $_.Exception.Message
+                        Start-Sleep -Milliseconds 1000
+                    }
+                }
+                throw "Remove failed after retry: $path ; $lastError"
+            }
+
+            function Move-WithRetry($src, $dst, $timeoutSec) {
+                $deadline = (Get-Date).AddSeconds($timeoutSec)
+                $lastError = $null
+                while ((Get-Date) -lt $deadline) {
+                    try {
+                        Move-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
+                        return
+                    } catch {
+                        $lastError = $_.Exception.Message
+                        Start-Sleep -Milliseconds 1000
+                    }
+                }
+                throw "Move failed after retry: $src -> $dst ; $lastError"
+            }
+
+            function Commit-Update {
+                try {
+                    $backup = Read-IniValue "Files" "backup_file"
+                    Write-IniValue "Retry" "retry_count" "0"
+                    Write-IniValue "State" "last_error" ""
+                    Write-IniValue "State" "state" "verified"
+                    if ($backup -and (Test-Path -LiteralPath $backup)) {
+                        Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+                    }
+                    if (Test-Path -LiteralPath $lockFile) {
+                        Remove-Item -LiteralPath $lockFile -Force -ErrorAction SilentlyContinue
+                    }
+                    Write-Log "INFO" "update committed"
+                } catch {
+                    Write-Log "WARN" "Commit-Update failed: $($_.Exception.Message)"
+                }
+            }
+
             function Restore-Backup($reason) {
                 Set-UpdateStatus "rollback" "rollback_start" "准备回滚：$reason" 80 "ERROR"
                 try {
                     $target = Read-IniValue "Files" "target"
                     $backup = Read-IniValue "Files" "backup_file"
+
+                    Assert-NotEmpty "Files.target" $target
+                    Assert-NotEmpty "Files.backup_file" $backup
 
                     if (!(Test-Path -LiteralPath $backup)) {
                         Set-UpdateStatus "failed_disabled" "rollback_no_backup" "备份文件不存在: $backup" 100 "ERROR"
@@ -528,9 +603,9 @@ class SelfUpdater:
                     }
 
                     if (Test-Path -LiteralPath $target) {
-                        Remove-Item -LiteralPath $target -Force -ErrorAction Stop
+                        Remove-WithRetry $target 30
                     }
-                    Move-Item -LiteralPath $backup -Destination $target -Force -ErrorAction Stop
+                    Move-WithRetry $backup $target 60
                     Set-UpdateStatus "rollback_done" "rollback_done" "已恢复旧版本：$reason" 100 "ERROR"
 
                     $retry = Get-RetryOrDefault "retry_count" 0
@@ -556,9 +631,8 @@ class SelfUpdater:
                 $psi.FileName = $filePath
                 $psi.UseShellExecute = $false
                 $psi.WorkingDirectory = Split-Path -Parent $filePath
-                $psi.Arguments = ($argList | ForEach-Object {
-                    if ($_ -match ' ') { '"{0}"' -f $_ } else { $_ }
-                }) -join ' '
+                $argsArr = @($argList | ForEach-Object { Quote-Arg $_ })
+                $psi.Arguments = if ($argsArr.Count -gt 0) { $argsArr -join ' ' } else { '' }
 
                 if ($resetPyInstallerEnv) {
                     $psi.EnvironmentVariables["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
@@ -575,7 +649,12 @@ class SelfUpdater:
                 if ($proc.WaitForExit($timeoutSec * 1000)) {
                     return $proc.ExitCode
                 }
-                try { $proc.Kill() } catch {}
+                try {
+                    if (-not $proc.HasExited) {
+                        $proc.Kill()
+                        $proc.WaitForExit(5000) | Out-Null
+                    }
+                } catch {}
                 return -1
             }
 
@@ -597,12 +676,18 @@ class SelfUpdater:
                         [Environment]::SetEnvironmentVariable($k, $null, "Process")
                     }
 
-                    $argString = [string](($argList | ForEach-Object {
-                        if ($_ -match ' ') { '"{0}"' -f $_ } else { $_ }
-                    }) -join ' ')
+                    $argsArr = @($argList | ForEach-Object { Quote-Arg $_ })
+                    $argString = if ($argsArr.Count -gt 0) { $argsArr -join ' ' } else { '' }
 
-                    Start-Process -FilePath $filePath -WorkingDirectory $workDir `
-                        -ArgumentList $argString -WindowStyle Normal
+                    $startArgs = @{
+                        FilePath = $filePath
+                        WorkingDirectory = $workDir
+                        WindowStyle = 'Normal'
+                    }
+                    if ($argString) {
+                        $startArgs.ArgumentList = $argString
+                    }
+                    Start-Process @startArgs
                 }
                 finally {
                     [Environment]::SetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", $oldReset, "Process")
@@ -633,6 +718,7 @@ class SelfUpdater:
                 Set-UpdateStatus "replacing" "verify_target_hash" "校验替换后的目标文件 SHA256" 60 "INFO"
                 $target    = Read-IniValue "Files" "target"
                 $newSha256 = Read-IniValue "Version" "new_sha256"
+                Assert-NotEmpty "Files.target" $target
                 if ($newSha256) {
                     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash.ToLowerInvariant()
                     if ($actual -ne $newSha256.ToLowerInvariant()) {
@@ -642,12 +728,20 @@ class SelfUpdater:
 
                 Set-UpdateStatus "pending_new_verify" "start_new_exe_verify" "启动新版程序进行自检" 75 "INFO"
                 $newVersion = Read-IniValue "Version" "new_version"
-                $verifyCode = Start-ProcWait $target @('--self-update-verify', '--expected-sha256', $newSha256, '--expected-version', $newVersion) 60 $true
+                $verifyArgs = @('--self-update-verify')
+                if ($newSha256) {
+                    $verifyArgs += @('--expected-sha256', $newSha256)
+                }
+                if ($newVersion) {
+                    $verifyArgs += @('--expected-version', $newVersion)
+                }
+                $verifyCode = Start-ProcWait $target $verifyArgs 60 $true
                 if ($verifyCode -ne 0) {
                     Restore-Backup "verify failed: exit $verifyCode"
                 }
 
                 Set-UpdateStatus "verified" "start_normal_app" "新版验证通过，启动主程序" 100 "INFO"
+                Commit-Update
                 Start-NormalAppVisible $target
                 exit 0
             } catch {
@@ -686,6 +780,12 @@ class SelfUpdater:
                 return ([string]$value) -replace "(`r`n|`n|`r)", " "
             }
 
+            function Assert-NotEmpty($name, $value) {
+                if ([string]::IsNullOrWhiteSpace($value)) {
+                    throw "missing required ini value: $name"
+                }
+            }
+
             function Write-Log($level, $message) {
                 try {
                     $line = "{0} -> {1} | {2} | {3}" -f $scriptTag, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $level, $message
@@ -758,6 +858,11 @@ class SelfUpdater:
             function Set-UpdateStatus($state, $step, $message, $progress, $level) {
                 $message = Normalize-IniValue $message
                 if ($state) { Write-IniValue "State" "state" $state }
+                if ($step) { Write-IniValue "State" "step" $step }
+                if ($null -ne $progress) { Write-IniValue "State" "progress" "$progress" }
+                if ($level) { Write-IniValue "State" "level" $level }
+                Write-IniValue "State" "message" $message
+                Write-IniValue "State" "updated_at" (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')
                 if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
                 Write-Log $level $message
                 try {
@@ -787,6 +892,13 @@ class SelfUpdater:
                 $newFile   = Read-IniValue "Files" "new_file"
                 $backup    = Read-IniValue "Files" "backup_file"
                 $newSha256 = Read-IniValue "Version" "new_sha256"
+
+                Assert-NotEmpty "Files.target" $target
+                Assert-NotEmpty "Files.new_file" $newFile
+                Assert-NotEmpty "Files.backup_file" $backup
+                if ($target -eq $newFile -or $target -eq $backup -or $newFile -eq $backup) {
+                    throw "invalid file paths: target/new_file/backup_file must be different"
+                }
 
                 Set-UpdateStatus "replacing" "check_new_file" "检查新版本文件是否存在: $newFile" 40 "INFO"
                 if (!(Test-Path -LiteralPath $newFile)) {

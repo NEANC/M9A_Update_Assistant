@@ -1,6 +1,34 @@
-"""沙箱测试：验证 Helper.ps1 + Update.ps1 完整流程"""
+"""沙箱测试：验证 Helper.ps1 + Update.ps1 完整流程
+
+用法：
+    python sandbox/sandbox_ps1_test.py              # 使用 Windows PowerShell 5.1
+    python sandbox/sandbox_ps1_test.py --pwsh pwsh  # 使用 PowerShell 7
+"""
 import os, shutil, sys, subprocess, tempfile, importlib
 from pathlib import Path
+
+# ── 解析命令行参数 ──
+PWSH_EXE = "powershell"  # 默认 Windows PowerShell 5.1
+if '--pwsh' in sys.argv:
+    idx = sys.argv.index('--pwsh')
+    if idx + 1 < len(sys.argv):
+        PWSH_EXE = sys.argv[idx + 1]
+
+print(f"[SANDBOX] Using PowerShell: {PWSH_EXE}")
+
+# 检查 PowerShell 可达性
+try:
+    ver_check = subprocess.run(
+        [PWSH_EXE, "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"],
+        capture_output=True, text=True, timeout=10,
+    )
+    print(f"[SANDBOX] PowerShell version: {ver_check.stdout.strip()}")
+except FileNotFoundError:
+    print(f"[SANDBOX] ERROR: {PWSH_EXE} not found, skipping test")
+    sys.exit(0)
+except subprocess.TimeoutExpired:
+    print(f"[SANDBOX] ERROR: {PWSH_EXE} timed out")
+    sys.exit(1)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import modules.self_updater
@@ -69,7 +97,7 @@ if lock_file.exists(): lock_file.unlink()
 if log_file.exists(): log_file.unlink()
 
 r = subprocess.run(
-    ['powershell', '-NoP', '-Ep', 'Bypass', '-File', str(update_path)],
+    [PWSH_EXE, '-NoP', '-Ep', 'Bypass', '-File', str(update_path)],
     cwd=str(tmpdir), capture_output=True, text=True, timeout=15
 )
 print(f"  exit={r.returncode}")
@@ -123,7 +151,7 @@ if lock_file.exists(): lock_file.unlink()
 if log_file.exists(): log_file.unlink()
 
 r = subprocess.run(
-    ['powershell', '-NoP', '-Ep', 'Bypass', '-File', str(helper_path), '-ParentPid', '0'],
+    [PWSH_EXE, '-NoP', '-Ep', 'Bypass', '-File', str(helper_path), '-ParentPid', '0'],
     cwd=str(tmpdir), capture_output=True, text=True, timeout=30
 )
 l_ok = lock_file.exists()
