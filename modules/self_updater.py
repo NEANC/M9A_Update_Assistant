@@ -315,16 +315,6 @@ class SelfUpdater:
             sha_path.write_text(new_sha256, encoding='ascii')
             self.logger.debug(f"已保存 SHA256 校验值: {sha_path}")
 
-            # ── 对比本地 .sha256 文件，若与 API 返回值有差异则更新 ──
-            if sha_path.exists():
-                old_local_sha = sha_path.read_text(encoding='ascii').strip()
-                if old_local_sha != new_sha256:
-                    self.logger.info(f"SHA256 已变更，更新本地校验文件: {sha_path}")
-                    sha_path.write_text(new_sha256, encoding='ascii')
-            else:
-                sha_path.write_text(new_sha256, encoding='ascii')
-                self.logger.debug(f"已保存 SHA256 校验值: {sha_path}")
-
             # ── 检查缓存：若已存在对应版本文件，优先用 GitHub API 的 SHA256 校验 ──
             if tmp_path.exists():
                 cached_valid = zip_manager.verify_file_sha256(str(tmp_path), new_sha256)
