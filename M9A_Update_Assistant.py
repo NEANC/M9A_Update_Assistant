@@ -501,6 +501,39 @@ class M9AUpdateAssistant:
         )
 
 
+def _resolve_temp_folder_from_config() -> str:
+    """从 config.ini 读取并解析临时文件夹路径"""
+    import configparser
+
+    exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+    config = configparser.ConfigParser()
+    if Path("config.ini").exists():
+        config.read("config.ini", encoding='utf-8')
+        temp_folder_config = config.get('Paths', 'temp_folder', fallback='').strip()
+    else:
+        temp_folder_config = ''
+
+    if not temp_folder_config:
+        system_temp = os.environ.get('TEMP', '')
+        if system_temp:
+            return os.path.join(system_temp, 'M9A-Update-Assistant')
+        local_app_data = os.environ.get('LOCALAPPDATA', '')
+        if local_app_data:
+            return os.path.join(local_app_data, 'Temp', 'M9A-Update-Assistant')
+        return os.path.join(exe_dir, 'Temp')
+
+    if temp_folder_config == 'Temp':
+        return os.path.join(exe_dir, 'Temp')
+
+    return temp_folder_config
+
+
+def _clean_self_update_cache(logger: logging.Logger) -> None:
+    """清理自更新下载缓存目录"""
+    temp_folder = _resolve_temp_folder_from_config()
+    SelfUpdater.clean_self_update_cache(temp_folder, logger)
+
+
 def _cleanup_update_residue(logger: logging.Logger) -> None:
     """清理上次成功更新后的残留文件"""
     state = UpdateState.load()
@@ -529,6 +562,10 @@ def _cleanup_update_residue(logger: logging.Logger) -> None:
                     logger.debug(f"已删除残留文件: {f}")
             except OSError:
                 pass
+
+        # ── 清理自更新缓存 ──
+        if '--not-delete' not in sys.argv:
+            _clean_self_update_cache(logger)
 
         state.delete()
         logger.info("残留文件清理完成")

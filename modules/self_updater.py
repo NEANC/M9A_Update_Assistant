@@ -1002,3 +1002,21 @@ class SelfUpdater:
         except OSError as e:
             logger.critical(f"回滚失败: {e}")
             return False
+
+    @staticmethod
+    def clean_self_update_cache(temp_folder: str, logger: logging.Logger) -> None:
+        """
+        清理自更新缓存目录 UpdateCache
+
+        Args:
+            temp_folder: 临时文件夹路径
+            logger: 日志记录器
+        """
+        cache_dir = Path(temp_folder) / "UpdateCache"
+        if not cache_dir.exists():
+            return
+        try:
+            shutil.rmtree(cache_dir)
+            logger.info(f"已清理自更新缓存: {cache_dir}")
+        except OSError as e:
+            logger.warning(f"清理自更新缓存失败: {e}")
