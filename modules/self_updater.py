@@ -315,30 +315,52 @@ class SelfUpdater:
             sha_path.write_text(new_sha256, encoding='ascii')
             self.logger.debug(f"已保存 SHA256 校验值: {sha_path}")
 
-            max_retries = 3
-            for attempt in range(max_retries):
-                file_name = Path(exe_url).name
-                if attempt > 0:
-                    self.logger.info(f"重试下载更新文件（{attempt + 1}/{max_retries}）: {file_name}")
-                else:
-                    self.logger.info(f"开始下载更新文件: {file_name}")
-                self.logger.debug(f"下载 URL: {exe_url}")
-
-                if not download_manager.download_file_with_progress(exe_url, str(tmp_path)):
-                    self.logger.error("下载失败")
-                    continue
-
-                if zip_manager.verify_file_sha256(str(tmp_path), new_sha256):
-                    break
-                self.logger.error("SHA256 校验失败，准备重试")
-
+            # ── 对比本地 .sha256 文件，若与 API 返回值有差异则更新 ──
+            if sha_path.exists():
+                old_local_sha = sha_path.read_text(encoding='ascii').strip()
+                if old_local_sha != new_sha256:
+                    self.logger.info(f"SHA256 已变更，更新本地校验文件: {sha_path}")
+                    sha_path.write_text(new_sha256, encoding='ascii')
             else:
-                self.logger.critical("软件更新下载校验失败，已达到最大重试次数，跳过更新")
-                tmp_path.unlink(missing_ok=True)
-                sha_path.unlink(missing_ok=True)
-                return False
+                sha_path.write_text(new_sha256, encoding='ascii')
+                self.logger.debug(f"已保存 SHA256 校验值: {sha_path}")
 
-            self.logger.info("新版本已下载并校验通过")
+            # ── 检查缓存：若已存在对应版本文件，优先用 GitHub API 的 SHA256 校验 ──
+            if tmp_path.exists():
+                cached_valid = zip_manager.verify_file_sha256(str(tmp_path), new_sha256)
+                if cached_valid:
+                    self.logger.info(f"缓存文件校验通过，跳过下载: {tmp_path}")
+                else:
+                    self.logger.warning(f"缓存文件 SHA256 校验失败，将重新下载: {tmp_path}")
+                    tmp_path.unlink(missing_ok=True)
+                    sha_path.unlink(missing_ok=True)
+            else:
+                cached_valid = False
+
+            if not cached_valid:
+                max_retries = 3
+                for attempt in range(max_retries):
+                    file_name = Path(exe_url).name
+                    if attempt > 0:
+                        self.logger.info(f"重试下载更新文件（{attempt + 1}/{max_retries}）: {file_name}")
+                    else:
+                        self.logger.info(f"开始下载更新文件: {file_name}")
+                    self.logger.debug(f"下载 URL: {exe_url}")
+
+                    if not download_manager.download_file_with_progress(exe_url, str(tmp_path)):
+                        self.logger.error("下载失败")
+                        continue
+
+                    if zip_manager.verify_file_sha256(str(tmp_path), new_sha256):
+                        break
+                    self.logger.error("SHA256 校验失败，准备重试")
+                else:
+                    self.logger.critical("软件更新下载校验失败，已达到最大重试次数，跳过更新")
+                    tmp_path.unlink(missing_ok=True)
+                    sha_path.unlink(missing_ok=True)
+                    return False
+
+                self.logger.info("新版本已下载并校验通过")
 
             self._replace_executable(tmp_path, sha_path, latest_version,
                                       old_sha256, new_sha256)
