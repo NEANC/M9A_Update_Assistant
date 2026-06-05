@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +31,10 @@ class M9AUpdater:
         """解析存档文件夹绝对路径：绝对路径直接返回，相对名拼到程序根目录"""
         if os.path.isabs(archive_folder_path):
             return archive_folder_path
-        program_root = Path(__file__).parent.parent
+        if getattr(sys, 'frozen', False):
+            program_root = Path(sys.executable).parent
+        else:
+            program_root = Path(__file__).parent.parent
         return str(program_root / archive_folder_path)
 
     @staticmethod
