@@ -12,6 +12,11 @@ from typing import List
 from modules.config_migration import apply_migrations
 
 
+def _get_program_dir() -> str:
+    """获取程序真实所在目录（兼容所有打包方式及源码运行）"""
+    return str(Path(sys.argv[0]).resolve().parent)
+
+
 class ConfigManager:
     """配置管理器，负责配置初始化、加载、验证"""
 
@@ -263,11 +268,11 @@ class ConfigManager:
                 if local_app_data:
                     temp_folder = os.path.join(local_app_data, 'Temp', 'M9A-Update-Assistant')
                 else:
-                    temp_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Temp')
+                    temp_folder = os.path.join(_get_program_dir(), 'Temp')
             self.logger.info(f"配置为空，使用系统临时文件夹: {temp_folder}")
             return temp_folder
         if temp_folder_config == 'Temp':
-            return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Temp')
+            return os.path.join(_get_program_dir(), 'Temp')
         return temp_folder_config
 
     def _ensure_temp_folder_exists(self) -> None:
@@ -287,7 +292,7 @@ class ConfigManager:
                 if local_app_data:
                     self.temp_folder = os.path.join(local_app_data, 'Temp', 'M9A-Update-Assistant')
                 else:
-                    self.temp_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Temp')
+                    self.temp_folder = os.path.join(_get_program_dir(), 'Temp')
             self.logger.info(f"使用系统临时文件夹: {self.temp_folder}")
             os.makedirs(self.temp_folder, exist_ok=True)
 

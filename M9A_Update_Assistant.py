@@ -505,7 +505,7 @@ def _resolve_temp_folder_from_config() -> str:
     """从 config.ini 读取并解析临时文件夹路径"""
     import configparser
 
-    exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+    exe_dir = str(Path(sys.argv[0]).resolve().parent)
     config = configparser.ConfigParser()
     if Path("config.ini").exists():
         config.read("config.ini", encoding='utf-8')

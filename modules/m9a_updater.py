@@ -31,10 +31,7 @@ class M9AUpdater:
         """解析存档文件夹绝对路径：绝对路径直接返回，相对名拼到程序根目录"""
         if os.path.isabs(archive_folder_path):
             return archive_folder_path
-        if getattr(sys, 'frozen', False):
-            program_root = Path(sys.executable).parent
-        else:
-            program_root = Path(__file__).parent.parent
+        program_root = Path(sys.argv[0]).resolve().parent
         return str(program_root / archive_folder_path)
 
     @staticmethod
