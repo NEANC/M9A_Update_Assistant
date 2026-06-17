@@ -73,6 +73,9 @@ class M9AUpdateAssistant:
         self.logger = self._setup_logger()
         self.config = ConfigManager(config_file, self.logger)
 
+        self._is_bundled = True
+        self._package_type = "Nuitka"
+
         if self._raw_read_save_enabled():
             self.file_handler = self._add_file_logger()
         else:
@@ -152,6 +155,7 @@ class M9AUpdateAssistant:
         self.logger.addHandler(file_handler)
 
         self.logger.debug(f"当前软件版本: {VERSION}")
+        self._is_bundled, self._package_type = SelfUpdater.detect_package_type()
         self.logger.info(f"日志文件已创建: {log_file}")
         return file_handler
 
@@ -498,6 +502,7 @@ class M9AUpdateAssistant:
             return False
         return self._self_update.check_self_update(
             VERSION, self._github, self._download, self._zip, force=force,
+            is_bundled=self._is_bundled, package_type=self._package_type,
         )
 
 
