@@ -58,17 +58,30 @@ class SelfUpdater:
         Returns:
             (是否为打包后程序, 打包方式名称)
         """
+        # 使用 sys.argv[0] 统一判断源码模式：.py 脚本即为源码运行
+        # 在 PyInstaller/Nuitka 打包后，sys.argv[0] 指向 .exe，不会以 .py 结尾
+        is_py_script = Path(sys.argv[0]).suffix.lower() == '.py'
+        # 兜底：检查打包标识
         is_pyinstaller = getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS')
         is_nuitka = hasattr(sys, '__compiled__')
-        is_py_script = sys.argv[0].endswith('.py')
-        is_bundled = not is_py_script or is_pyinstaller or is_nuitka
 
-        package_type = "Nuitka"
+        is_bundled = (not is_py_script) or is_pyinstaller or is_nuitka
+
+        logger = logging.getLogger("M9AUpdateAssistant")
+
         if is_pyinstaller:
-            package_type = "PyInstaller"
+            local_package_type = "PyInstaller"
+        elif is_nuitka:
+            local_package_type = "Nuitka"
+        else:
+            local_package_type = "Nuitka"
 
-        logging.getLogger("M9AUpdateAssistant").debug(f"当前运行模式: {package_type}")
-        return is_bundled, package_type
+        if is_bundled:
+            logger.debug(f"运行环境: {local_package_type}")
+        else:
+            logger.debug(f"运行环境: 源码模式")
+
+        return is_bundled, local_package_type
 
     @staticmethod
     def version_to_tuple(v: str) -> Tuple[int, ...]:
@@ -213,16 +226,28 @@ class SelfUpdater:
     def check_self_update(self, current_version: str, gh_client: GitHubReleaseClient,
                            download_manager: DownloadManager,
                            zip_manager: ZipManager,
-                           force: bool = False) -> bool:
+                           force: bool = False,
+                           is_bundled: Optional[bool] = None,
+                           package_type: Optional[str] = None) -> bool:
         """
         检查并准备自身更新
+
+        Args:
+            current_version: 当前版本号
+            gh_client: GitHub API 客户端
+            download_manager: 下载管理器
+            zip_manager: ZIP 管理器
+            force: 是否强制更新
+            is_bundled: 外部预检测的是否为打包程序（可选，避免重复调用 detect_package_type）
+            package_type: 外部预检测的打包方式（可选）
 
         Returns:
             bool: 是否需要退出以完成更新
         """
         self.logger.info("开始检查软件版本...")
 
-        is_bundled, package_type = self.detect_package_type()
+        if is_bundled is None:
+            is_bundled, package_type = self.detect_package_type()
         if not is_bundled:
             self.logger.warning("当前为调试模式，跳过更新检查")
             return False

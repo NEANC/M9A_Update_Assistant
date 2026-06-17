@@ -41,6 +41,21 @@ def print_info():
     print("\n")
 
 
+def setup_utf8_console() -> None:
+    """强制 stdout/stderr 使用 UTF-8 编码"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+    if sys.stdin and hasattr(sys.stdin, "reconfigure"):
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 class M9AUpdateAssistant:
     """M9A 更新类，用于处理 M9A 的更新操作（编排器）"""
 
@@ -54,6 +69,9 @@ class M9AUpdateAssistant:
         self.config_file = config_file
         self.logger = self._setup_logger()
         self.config = ConfigManager(config_file, self.logger)
+
+        self._is_bundled = True
+        self._package_type = "Nuitka"
 
         if self._raw_read_save_enabled():
             self.file_handler = self._add_file_logger()
@@ -424,6 +442,7 @@ class M9AUpdateAssistant:
             return False
         return self._self_update.check_self_update(
             VERSION, self._github, self._download, self._zip, force=force,
+            is_bundled=self._is_bundled, package_type=self._package_type,
         )
 
 
@@ -598,4 +617,5 @@ def main():
 
 
 if __name__ == "__main__":
+    setup_utf8_console()
     main()
