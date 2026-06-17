@@ -38,6 +38,21 @@ def print_info():
     print("\n")
 
 
+def setup_utf8_console() -> None:
+    """强制 stdout/stderr 使用 UTF-8 编码"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+    if sys.stdin and hasattr(sys.stdin, "reconfigure"):
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 class ColoredFormatter(logging.Formatter):
     """带颜色的日志格式化器，仅作用于控制台输出"""
 
@@ -677,4 +692,5 @@ def main():
 
 
 if __name__ == "__main__":
+    setup_utf8_console()
     main()
