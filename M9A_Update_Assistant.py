@@ -61,8 +61,8 @@ class M9AUpdateAssistant:
             self.file_handler = self._add_file_logger()
         else:
             self.file_handler = None
-        # 版本号日志之后紧跟运行环境检测
-        self._is_bundled, self._package_type = SelfUpdater.detect_package_type()
+            # 无文件日志时仍需检测运行环境
+            self._is_bundled, self._package_type = SelfUpdater.detect_package_type()
 
         self.config.load()
 

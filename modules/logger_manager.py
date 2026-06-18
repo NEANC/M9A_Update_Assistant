@@ -103,7 +103,6 @@ def add_file_logger(logger: logging.Logger, version: str = "") -> logging.FileHa
 
     if version:
         logger.debug(f"当前软件版本: {version}")
-    logger.info(f"日志文件已创建: {log_file}")
     return file_handler
 
 
