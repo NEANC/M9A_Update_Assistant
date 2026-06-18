@@ -655,6 +655,7 @@ class SelfUpdater:
                 $psi = New-Object System.Diagnostics.ProcessStartInfo
                 $psi.FileName = $filePath
                 $psi.UseShellExecute = $false
+                $psi.CreateNoWindow = $true
                 $psi.WorkingDirectory = Split-Path -Parent $filePath
                 $argsArr = @($argList | ForEach-Object { Quote-Arg $_ })
                 $psi.Arguments = if ($argsArr.Count -gt 0) { $argsArr -join ' ' } else { '' }
