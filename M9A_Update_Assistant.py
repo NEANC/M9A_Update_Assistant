@@ -5,7 +5,7 @@ import logging
 import os
 import shutil
 import sys
-
+import configparser
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -113,8 +113,11 @@ class M9AUpdateAssistant:
         return raw_read_save_enabled(self.config_file)
 
     def _add_file_logger(self) -> logging.FileHandler:
-        """添加文件日志记录器，委托给 logger_manager.add_file_logger"""
-        return add_file_logger(self.logger, VERSION)
+        """添加文件日志记录器：版本号 → 运行环境 → 日志文件已创建"""
+        file_handler = add_file_logger(self.logger, VERSION)
+        self._is_bundled, self._package_type = SelfUpdater.detect_package_type()
+        self.logger.info(f"日志文件已创建: {file_handler.baseFilename}")
+        return file_handler
 
     def _cleanup_old_logs(self) -> None:
         """清理多余的日志文件，委托给 logger_manager.cleanup_old_logs"""
@@ -450,9 +453,8 @@ class M9AUpdateAssistant:
 
 def _resolve_temp_folder_from_config() -> str:
     """从 config.ini 读取并解析临时文件夹路径"""
-    import configparser
+    from modules.config_manager import resolve_temp_folder
 
-    exe_dir = str(Path(sys.argv[0]).resolve().parent)
     config = configparser.ConfigParser()
     if Path("config.ini").exists():
         config.read("config.ini", encoding='utf-8')
@@ -460,19 +462,7 @@ def _resolve_temp_folder_from_config() -> str:
     else:
         temp_folder_config = ''
 
-    if not temp_folder_config:
-        system_temp = os.environ.get('TEMP', '')
-        if system_temp:
-            return os.path.join(system_temp, 'M9A-Update-Assistant')
-        local_app_data = os.environ.get('LOCALAPPDATA', '')
-        if local_app_data:
-            return os.path.join(local_app_data, 'Temp', 'M9A-Update-Assistant')
-        return os.path.join(exe_dir, 'Temp')
-
-    if temp_folder_config == 'Temp':
-        return os.path.join(exe_dir, 'Temp')
-
-    return temp_folder_config
+    return resolve_temp_folder(temp_folder_config)
 
 
 def _clean_self_update_cache(logger: logging.Logger) -> None:

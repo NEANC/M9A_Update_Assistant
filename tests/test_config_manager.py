@@ -111,21 +111,21 @@ m9a_folders =
 
     def test_resolve_temp_folder_empty(self):
         """测试空配置时解析临时文件夹"""
-        cm = ConfigManager("dummy.ini", self.logger)
-        result = cm._resolve_temp_folder('')
+        from modules.config_manager import resolve_temp_folder
+        result = resolve_temp_folder('')
         self.assertTrue(len(result) > 0)
 
     def test_resolve_temp_folder_temp_keyword(self):
         """测试 Temp 关键词"""
-        cm = ConfigManager("dummy.ini", self.logger)
-        result = cm._resolve_temp_folder('Temp')
+        from modules.config_manager import resolve_temp_folder
+        result = resolve_temp_folder('Temp')
         self.assertIn('Temp', result)
 
     def test_resolve_temp_folder_custom(self):
         """测试自定义临时文件夹路径"""
-        cm = ConfigManager("dummy.ini", self.logger)
+        from modules.config_manager import resolve_temp_folder
         custom = r'D:\MyTemp'
-        result = cm._resolve_temp_folder(custom)
+        result = resolve_temp_folder(custom)
         self.assertEqual(result, custom)
 
     def test_validate_no_folders(self):
