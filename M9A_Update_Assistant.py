@@ -5,58 +5,39 @@ import logging
 import os
 import shutil
 import sys
-
-import colorama
-
-from datetime import datetime
+import configparser
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from modules.config_manager import ConfigManager
 from modules.github_release_client import GitHubReleaseClient
 from modules.download_manager import DownloadManager
-from modules.zip_manager import ZipManager
+from modules.logger_manager import (
+    add_file_logger,
+    cleanup_old_logs,
+    raw_read_save_enabled,
+    setup_logger,
+)
 from modules.m9a_updater import M9AUpdater
 from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater
-from modules.version import VERSION
+from modules.version import VERSION, print_info
+from modules.zip_manager import ZipManager
 
 
-def print_info():
-    """打印程序的版本和版权信息。"""
-    print("\n")
-    print("+ " + " M9A Update Assistant ".center(60, "="), "+")
-    print("||" + "".center(60, " ") + "||")
-    print("||" + "M9A CLI 更新小助手".center(55, " ") + "||")
-    print("||" + "本项目使用 AI 进行生成".center(51, " ") + "||")
-    print("||" + "".center(60, " ") + "||")
-    print("|| " + "".center(58, "-") + " ||")
-    print("||" + "".center(60, " ") + "||")
-    print("||" + f"Version: {VERSION}    License: WTFPL".center(60, " ") + "||")
-    print("||" + "".center(60, " ") + "||")
-    print("+ " + "".center(60, "=") + " +")
-    print("\n")
-
-
-class ColoredFormatter(logging.Formatter):
-    """带颜色的日志格式化器，仅作用于控制台输出"""
-
-    LEVEL_COLORS = {
-        'DEBUG': colorama.Fore.CYAN,
-        'INFO': colorama.Fore.WHITE,
-        'WARNING': colorama.Fore.YELLOW,
-        'ERROR': colorama.Fore.RED,
-        'CRITICAL': colorama.Back.RED + colorama.Fore.BLACK + colorama.Style.BRIGHT,
-    }
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        colorama.init(autoreset=True)
-
-    def format(self, record: logging.LogRecord) -> str:
-        color = self.LEVEL_COLORS.get(record.levelname, colorama.Fore.WHITE)
-        result = super().format(record)
-        return f"{color}{result}{colorama.Style.RESET_ALL}"
+def setup_utf8_console() -> None:
+    """强制 stdout/stderr 使用 UTF-8 编码"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+    if sys.stdin and hasattr(sys.stdin, "reconfigure"):
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 
 class M9AUpdateAssistant:
@@ -73,10 +54,15 @@ class M9AUpdateAssistant:
         self.logger = self._setup_logger()
         self.config = ConfigManager(config_file, self.logger)
 
+        self._is_bundled = True
+        self._package_type = "Nuitka"
+
         if self._raw_read_save_enabled():
             self.file_handler = self._add_file_logger()
         else:
             self.file_handler = None
+            # 无文件日志时仍需检测运行环境
+            self._is_bundled, self._package_type = SelfUpdater.detect_package_type()
 
         self.config.load()
 
@@ -103,76 +89,23 @@ class M9AUpdateAssistant:
         self.keep_temp = False
 
     def _setup_logger(self) -> logging.Logger:
-        """
-        设置日志记录器
-
-        Returns:
-            配置好的日志记录器
-        """
-        logger = logging.getLogger("M9AUpdateAssistant")
-        logger.setLevel(logging.DEBUG)
-
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        console_formatter = ColoredFormatter(
-            '%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
-            datefmt='%H:%M:%S',
-        )
-        console_handler.setFormatter(console_formatter)
-        logger.addHandler(console_handler)
-
-        return logger
+        """设置日志记录器，委托给 logger_manager.setup_logger"""
+        return setup_logger()
 
     def _raw_read_save_enabled(self) -> bool:
         """在加载完整配置前，粗读配置文件判断是否启用日志保存"""
-        if not Path(self.config_file).exists():
-            return True
-        try:
-            import configparser
-            raw = configparser.ConfigParser()
-            raw.read(self.config_file, encoding='utf-8')
-            return raw.getboolean('Logs', 'save_enabled', fallback=True)
-        except Exception:
-            return True
+        return raw_read_save_enabled(self.config_file)
 
     def _add_file_logger(self) -> logging.FileHandler:
-        """添加文件日志记录器，始终挂载"""
-        log_dir = Path("logs")
-        log_dir.mkdir(exist_ok=True)
-
-        log_file = log_dir / f"M9A_Update_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter(
-            '%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S',
-        )
-        file_handler.setFormatter(formatter)
-        self.logger.addHandler(file_handler)
-
-        self.logger.debug(f"当前软件版本: {VERSION}")
-        self.logger.info(f"日志文件已创建: {log_file}")
+        """添加文件日志记录器：版本号 → 运行环境 → 日志文件已创建"""
+        file_handler = add_file_logger(self.logger, VERSION)
+        self._is_bundled, self._package_type = SelfUpdater.detect_package_type()
+        self.logger.info(f"日志文件已创建: {file_handler.baseFilename}")
         return file_handler
 
     def _cleanup_old_logs(self) -> None:
-        """清理多余的日志文件"""
-        log_dir = Path("logs")
-        if not log_dir.exists():
-            return
-
-        log_files = list(log_dir.glob("M9A_Update_*.log"))
-        if len(log_files) <= self.config.log_max_files:
-            return
-
-        log_files.sort(key=lambda x: x.stat().st_mtime)
-        files_to_delete = log_files[:-self.config.log_max_files]
-        for log_file in files_to_delete:
-            try:
-                log_file.unlink()
-                self.logger.info(f"已删除多余的日志文件: {log_file}")
-            except Exception as e:
-                self.logger.error(f"删除日志文件 {log_file} 失败: {e}")
+        """清理多余的日志文件，委托给 logger_manager.cleanup_old_logs"""
+        cleanup_old_logs(self.logger, self.config.log_max_files)
 
     def validate_config(self) -> bool:
         """验证配置"""
@@ -498,14 +431,14 @@ class M9AUpdateAssistant:
             return False
         return self._self_update.check_self_update(
             VERSION, self._github, self._download, self._zip, force=force,
+            is_bundled=self._is_bundled, package_type=self._package_type,
         )
 
 
 def _resolve_temp_folder_from_config() -> str:
     """从 config.ini 读取并解析临时文件夹路径"""
-    import configparser
+    from modules.config_manager import resolve_temp_folder
 
-    exe_dir = str(Path(sys.argv[0]).resolve().parent)
     config = configparser.ConfigParser()
     if Path("config.ini").exists():
         config.read("config.ini", encoding='utf-8')
@@ -513,19 +446,7 @@ def _resolve_temp_folder_from_config() -> str:
     else:
         temp_folder_config = ''
 
-    if not temp_folder_config:
-        system_temp = os.environ.get('TEMP', '')
-        if system_temp:
-            return os.path.join(system_temp, 'M9A-Update-Assistant')
-        local_app_data = os.environ.get('LOCALAPPDATA', '')
-        if local_app_data:
-            return os.path.join(local_app_data, 'Temp', 'M9A-Update-Assistant')
-        return os.path.join(exe_dir, 'Temp')
-
-    if temp_folder_config == 'Temp':
-        return os.path.join(exe_dir, 'Temp')
-
-    return temp_folder_config
+    return resolve_temp_folder(temp_folder_config)
 
 
 def _clean_self_update_cache(logger: logging.Logger) -> None:
@@ -672,4 +593,5 @@ def main():
 
 
 if __name__ == "__main__":
+    setup_utf8_console()
     main()

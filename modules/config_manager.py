@@ -17,6 +17,39 @@ def _get_program_dir() -> str:
     return str(Path(sys.argv[0]).resolve().parent)
 
 
+def resolve_temp_folder(temp_folder_config: str, program_dir: str = '',
+                         logger: logging.Logger = None) -> str:
+    """根据配置值解析临时文件夹路径
+
+    Args:
+        temp_folder_config: 配置中的 temp_folder 值（已 strip）
+        program_dir: 程序根目录，空则自动检测
+        logger: 可选的日志记录器
+
+    Returns:
+        解析后的临时文件夹绝对路径
+    """
+    if not program_dir:
+        program_dir = _get_program_dir()
+
+    if not temp_folder_config:
+        system_temp = os.environ.get('TEMP', '')
+        if system_temp:
+            result = os.path.join(system_temp, 'M9A-Update-Assistant')
+        else:
+            local_app_data = os.environ.get('LOCALAPPDATA', '')
+            if local_app_data:
+                result = os.path.join(local_app_data, 'Temp', 'M9A-Update-Assistant')
+            else:
+                result = os.path.join(program_dir, 'Temp')
+        if logger:
+            logger.info(f"配置为空，使用系统临时文件夹: {result}")
+        return result
+    if temp_folder_config == 'Temp':
+        return os.path.join(program_dir, 'Temp')
+    return temp_folder_config
+
+
 class ConfigManager:
     """配置管理器，负责配置初始化、加载、验证"""
 
@@ -249,32 +282,6 @@ class ConfigManager:
                         break
         return changed
 
-    def _resolve_temp_folder(self, temp_folder_config: str) -> str:
-        """
-        根据配置确定临时文件夹路径
-
-        Args:
-            temp_folder_config: 配置中的临时文件夹路径
-
-        Returns:
-            解析后的临时文件夹路径
-        """
-        if not temp_folder_config:
-            system_temp = os.environ.get('TEMP', '')
-            if system_temp:
-                temp_folder = os.path.join(system_temp, 'M9A-Update-Assistant')
-            else:
-                local_app_data = os.environ.get('LOCALAPPDATA', '')
-                if local_app_data:
-                    temp_folder = os.path.join(local_app_data, 'Temp', 'M9A-Update-Assistant')
-                else:
-                    temp_folder = os.path.join(_get_program_dir(), 'Temp')
-            self.logger.info(f"配置为空，使用系统临时文件夹: {temp_folder}")
-            return temp_folder
-        if temp_folder_config == 'Temp':
-            return os.path.join(_get_program_dir(), 'Temp')
-        return temp_folder_config
-
     def _ensure_temp_folder_exists(self) -> None:
         """确保临时文件夹存在，若创建失败则回退到系统临时文件夹"""
         if os.path.exists(self.temp_folder):
@@ -351,7 +358,7 @@ class ConfigManager:
             self.m9a_folders = []
 
         temp_folder_config = self.config.get('Paths', 'temp_folder', fallback='Temp').strip()
-        self.temp_folder = self._resolve_temp_folder(temp_folder_config)
+        self.temp_folder = resolve_temp_folder(temp_folder_config, _get_program_dir(), self.logger)
         self._ensure_temp_folder_exists()
 
         self.archive_folder_path = self.config.get('Paths', 'archive_folder_path', fallback='存档文件夹').strip()
