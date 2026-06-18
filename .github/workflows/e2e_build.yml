@@ -1,0 +1,212 @@
+name: E2E Build Test
+
+on:
+  workflow_run:
+    workflows: [Build]
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: '1'
+
+jobs:
+  e2e-exe:
+    name: "EXE (${{ matrix.pkg }})"
+    runs-on: windows-latest
+    timeout-minutes: 30
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: [Nuitka, PyInstaller]
+
+    steps:
+      - name: Check-out repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+
+      - name: Setup Python (for test helper)
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download artifacts from Build workflow
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Locate ${{ matrix.pkg }} EXE
+        shell: pwsh
+        run: |
+          Write-Host "=== Scanning downloaded artifacts ==="
+          Get-ChildItem -Recurse -File | ForEach-Object { Write-Host $_.FullName }
+
+          $pattern = "M9A_Update_Assistant-${{ matrix.pkg }}-*"
+          $artifactDir = Get-ChildItem -Recurse -Directory -Filter $pattern | Select-Object -First 1
+          if (-not $artifactDir) {
+            Write-Error "未找到 $pattern 目录"
+            exit 1
+          }
+
+          $exe = Get-ChildItem -Path $artifactDir.FullName -Filter "M9A_Update_Assistant.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) {
+            $exe = Get-ChildItem -Path $artifactDir.FullName -Filter "*.exe" | Select-Object -First 1
+          }
+          if (-not $exe) {
+            Write-Error "未找到 M9A_Update_Assistant.exe"
+            exit 1
+          }
+
+          Write-Host "Artifact dir: $($artifactDir.FullName)"
+          Write-Host "EXE: $($exe.FullName)"
+          "CI_EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Prepare test directories & fake M9A
+        shell: pwsh
+        run: |
+          $exeDir = Split-Path -Parent $env:CI_EXE
+          $m9aDir = Join-Path $env:RUNNER_TEMP "ci_m9a_$(Get-Random)"
+          $archiveDir = Join-Path $env:RUNNER_TEMP "ci_archive_$(Get-Random)"
+          New-Item -ItemType Directory -Force -Path $m9aDir, $archiveDir | Out-Null
+
+          # 创建假的 interface.json，版本号极高，避免触发真实 M9A 下载
+          @{ version = "v99.0.0" } | ConvertTo-Json | Set-Content (Join-Path $m9aDir "interface.json") -Encoding UTF8
+
+          "CI_EXE_DIR=$exeDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CI_M9A=$m9aDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CI_ARCHIVE=$archiveDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Create test config.ini
+        shell: pwsh
+        run: |
+          $config = @"
+          [Paths]
+          m9a_folders = $env:CI_M9A
+          temp_folder = Temp
+          archive_folder_path = $env:CI_ARCHIVE
+
+          [Logs]
+          save_enabled = true
+          max_files = 3
+
+          [GitHub]
+          repo = MAA1999/M9A
+          proxy =
+          m9a_update_channel = stable
+
+          [SelfUpdate]
+          enabled = false
+          self_update_channel = stable
+          "@
+          Set-Content -LiteralPath (Join-Path $env:CI_EXE_DIR "config.ini") -Value $config -Encoding UTF8
+          Write-Host "config.ini:"
+          Get-Content (Join-Path $env:CI_EXE_DIR "config.ini")
+
+      - name: E2E — 运行 EXE 全流程 (${{ matrix.pkg }})
+        shell: pwsh
+        run: |
+          & sandbox/e2e_build_verify.ps1
+
+      - name: E2E — 自更新启用测试 (${{ matrix.pkg }})
+        shell: pwsh
+        run: |
+          # 覆盖配置：启用自更新
+          $configPath = Join-Path $env:CI_EXE_DIR "config.ini"
+          $config = Get-Content $configPath -Raw -Encoding UTF8
+          $config = $config -replace 'enabled = false', 'enabled = true'
+          Set-Content -LiteralPath $configPath -Value $config -Encoding UTF8
+          Write-Host "config.ini (self_update enabled):"
+          Get-Content $configPath | Select-String "enabled"
+
+          $proc = Start-Process -FilePath $env:CI_EXE `
+            -WorkingDirectory $env:CI_EXE_DIR `
+            -ArgumentList "--not-delete" `
+            -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput (Join-Path $env:CI_EXE_DIR "stdout_selfupdate.txt") `
+            -RedirectStandardError (Join-Path $env:CI_EXE_DIR "stderr_selfupdate.txt")
+
+          # 等待最多 45 秒，期间轮询检查
+          $deadline = (Get-Date).AddSeconds(45)
+          $done = $false
+          while ((Get-Date) -lt $deadline) {
+            if ($proc.HasExited) {
+              $done = $true
+              break
+            }
+            Start-Sleep -Milliseconds 1000
+          }
+
+          if (-not $done) {
+            Write-Host "[INFO] 自更新启用后 EXE 未自动退出 (超时)，尝试终止..."
+            try { $proc.Kill(); Start-Sleep -Milliseconds 1000 } catch {}
+            if (-not $proc.HasExited) {
+              Write-Host "[WARN] 无法终止进程，可能已启动更新流程"
+            }
+          }
+
+          Write-Host "退出码: $($proc.ExitCode)"
+
+          $sout = Get-Content (Join-Path $env:CI_EXE_DIR "stdout_selfupdate.txt") -Raw -ErrorAction SilentlyContinue
+          $serr = Get-Content (Join-Path $env:CI_EXE_DIR "stderr_selfupdate.txt") -Raw -ErrorAction SilentlyContinue
+          Write-Host "--- STDOUT (self_update) ---"
+          Write-Host $sout
+          Write-Host "--- STDERR (self_update) ---"
+          Write-Host $serr
+
+          $combined = "$sout`n$serr"
+          $selfUpdatePass = $true
+
+          # 验证打包模式检测
+          if ($combined -match "打包模式") {
+            Write-Host "[PASS] 自更新: 打包模式检测通过"
+          } else {
+            Write-Error "FAIL: 自更新未检测到打包模式"
+            $selfUpdatePass = $false
+          }
+
+          # 验证版本检查已启动
+          if ($combined -match "开始检查软件版本") {
+            Write-Host "[PASS] 自更新: 版本检查已启动"
+          } else {
+            Write-Host "[WARN] 自更新未找到 '开始检查软件版本'"
+          }
+
+          # 验证版本比对有结论
+          if ($combined -match "检测到新版本" -or $combined -match "当前版本已最新" -or $combined -match "版本号校验错误") {
+            Write-Host "[PASS] 自更新: 版本比对结论明确"
+          } else {
+            Write-Host "[WARN] 自更新版本比对无明确结论（可能 API 限流）"
+          }
+
+          if (-not $selfUpdatePass) {
+            exit 1
+          }
+          Write-Host ""
+          Write-Host "[PASS] E2E 自更新启用测试通过"
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-build-${{ matrix.pkg }}-logs
+          path: |
+            **/stdout.txt
+            **/stderr.txt
+            logs/*.log
+          retention-days: 7
