@@ -120,13 +120,18 @@ def cleanup_old_logs(logger: logging.Logger, max_files: int) -> None:
 
     log_files = list(log_dir.glob("M9A_Update_*.log"))
     if len(log_files) <= max_files:
+        logger.debug(f"日志文件数量 {len(log_files)} 未超过限制 {max_files}，无需清理")
         return
 
     log_files.sort(key=lambda x: x.stat().st_mtime)
     files_to_delete = log_files[:-max_files]
+    deleted_count = 0
     for log_file in files_to_delete:
         try:
             log_file.unlink()
-            logger.info(f"已删除多余的日志文件: {log_file}")
+            logger.debug(f"已删除日志文件: {log_file}")
+            deleted_count += 1
         except Exception as e:
             logger.error(f"删除日志文件 {log_file} 失败: {e}")
+    if deleted_count:
+        logger.info(f"已清理 {deleted_count} 个日志文件")
