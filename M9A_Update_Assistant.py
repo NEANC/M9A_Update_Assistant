@@ -373,11 +373,11 @@ class M9AUpdateAssistant:
             folder_existed = os.path.exists(m9a_folder)
 
             if folder_existed:
-                config_backup_successful = self._updater.backup_config(m9a_folder, version)
-                if not config_backup_successful:
+                old_version = self._updater.backup_config(m9a_folder, version)
+                if not old_version:
                     self.logger.warning("config 文件夹不存在或备份失败，将跳过备份和回写步骤")
             else:
-                config_backup_successful = False
+                old_version = None
 
             if not self._updater.clean_m9a_folder(m9a_folder):
                 self.logger.critical(f"清理 M9A 文件夹失败: {m9a_folder}")
@@ -389,8 +389,8 @@ class M9AUpdateAssistant:
                 all_success = False
                 continue
 
-            if config_backup_successful:
-                if not self._updater.restore_config(m9a_folder, version):
+            if old_version:
+                if not self._updater.restore_config(m9a_folder, old_version):
                     self.logger.critical(f"回写 config 失败: {m9a_folder}")
                     all_success = False
                     continue
