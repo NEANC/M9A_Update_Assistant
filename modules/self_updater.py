@@ -193,7 +193,7 @@ class SelfUpdater:
             self.logger.debug(f"获取当前版本 release 信息: {api_url}")
             response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
             if response.status_code == 404:
-                self.logger.info(f"tag 名称精确匹配未找到，尝试大小写不敏感匹配...")
+                self.logger.debug(f"tag 名称精确匹配未找到，尝试大小写不敏感匹配...")
                 release_info = self._match_release_by_tag(current_version, headers, proxies)
             else:
                 response.raise_for_status()
@@ -214,7 +214,7 @@ class SelfUpdater:
                     digest = asset.get('digest', '')
                     if digest.startswith('sha256:'):
                         return digest[7:]
-            self.logger.warning("当前版本 release 中未找到 SHA256 digest")
+            self.logger.warning("当前版本 release 中未找到对应的 SHA256 值")
             return ""
         except requests.RequestException as e:
             self.logger.warning(f"获取当前版本 SHA256 失败: {e}")
@@ -1005,7 +1005,7 @@ class SelfUpdater:
 
         self._generate_helper_ps1(base_dir)
         self._generate_update_ps1(base_dir)
-        self.logger.info(f"已生成更新脚本: {base_dir}")
+        self.logger.info(f"已生成更新脚本到目录: {base_dir}")
 
         state.transition("helper_started")
 
