@@ -21,24 +21,8 @@ from modules.logger_manager import (
 from modules.m9a_updater import M9AUpdater
 from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater
-from modules.version import VERSION
+from modules.version import VERSION, print_info
 from modules.zip_manager import ZipManager
-
-
-def print_info():
-    """打印程序的版本和版权信息。"""
-    print("\n")
-    print("+ " + " M9A Update Assistant ".center(60, "="), "+")
-    print("||" + "".center(60, " ") + "||")
-    print("||" + "M9A CLI 更新小助手".center(55, " ") + "||")
-    print("||" + "本项目使用 AI 进行生成".center(51, " ") + "||")
-    print("||" + "".center(60, " ") + "||")
-    print("|| " + "".center(58, "-") + " ||")
-    print("||" + "".center(60, " ") + "||")
-    print("||" + f"Version: {VERSION}    License: WTFPL".center(60, " ") + "||")
-    print("||" + "".center(60, " ") + "||")
-    print("+ " + "".center(60, "=") + " +")
-    print("\n")
 
 
 def setup_utf8_console() -> None:
