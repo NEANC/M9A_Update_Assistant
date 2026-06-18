@@ -76,26 +76,26 @@ class M9AUpdater:
         folder_name = m9a_path_obj.name
         return f"{drive_letter}-{folder_name}"
 
-    def backup_config(self, m9a_folder: str, version: str = '') -> bool:
+    def backup_config(self, m9a_folder: str, version: str = '') -> Optional[str]:
         """
         备份 config 文件夹到程序根目录
 
         Args:
             m9a_folder: M9A 文件夹路径
-            version: 版本号（如 v3.19.0）
+            version: 版本号回退值（如 v3.19.0），若 interface.json 不可读则使用此值
 
         Returns:
-            bool: 操作是否成功
+            实际使用的旧版本号，若备份失败则返回 None
         """
         version = self.get_version_from_interface(m9a_folder, version)
         if not version:
             self.logger.warning("未找到版本号，跳过备份")
-            return False
+            return None
 
         m9a_config_path = Path(m9a_folder) / "config"
         if not m9a_config_path.exists():
             self.logger.warning(f"M9A 文件夹中的 config 文件夹不存在: {m9a_config_path}")
-            return False
+            return None
 
         try:
             backup_name = self.get_backup_name(m9a_folder)
@@ -119,10 +119,10 @@ class M9AUpdater:
             shutil.copytree(m9a_config_path, archive_path, dirs_exist_ok=True)
             self.logger.info(f"config 文件夹已备份到: {archive_path}")
 
-            return True
+            return version
         except (IOError, OSError, shutil.Error) as e:
             self.logger.error(f"备份 config 文件夹失败: {e}")
-            return False
+            return None
 
     def clean_m9a_folder(self, m9a_folder: str) -> bool:
         """
@@ -164,16 +164,14 @@ class M9AUpdater:
 
         Args:
             m9a_folder: M9A 文件夹路径
-            version: 版本号（如 v3.19.0）
+            version: 旧版本号（必须传入，不能从 interface.json 重新读取）
 
         Returns:
             bool: 操作是否成功
         """
-        version = self.get_version_from_interface(m9a_folder, version)
-        if not version:
-            self.logger.warning("版本号为空，跳过回写")
-            return False
-
+        # 不能从 interface.json 重新读取版本号——
+        # restore 时 M9A 文件夹已被新 ZIP 覆盖，interface.json 是新版本号。
+        # 必须使用调用方传入的旧版本号，它对应备份时使用的路径。
         backup_name = self.get_backup_name(m9a_folder)
         archive_config_path = self.archive_dir / version / backup_name / "config"
         m9a_config_path = Path(m9a_folder) / "config"
