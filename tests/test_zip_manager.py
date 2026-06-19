@@ -276,18 +276,14 @@ class TestExtractZip(unittest.TestCase):
                 zf.writestr('sub/file2.txt', 'content2')
 
             extract_dir = os.path.join(tmpdir, 'out')
-            from modules.download_manager import DownloadManager
-            dm = DownloadManager('', tmpdir, self.logger)
-            result = self.zip_mgr.extract_zip_with_progress(zip_path, extract_dir, dm)
+            result = self.zip_mgr.extract_zip_with_progress(zip_path, extract_dir)
             self.assertTrue(result)
             self.assertTrue(os.path.exists(os.path.join(extract_dir, 'file1.txt')))
             self.assertTrue(os.path.exists(os.path.join(extract_dir, 'sub/file2.txt')))
 
     def test_extract_nonexistent_zip(self):
         """解压不存在的文件"""
-        from modules.download_manager import DownloadManager
-        dm = DownloadManager('', '/tmp', self.logger)
-        result = self.zip_mgr.extract_zip_with_progress('/nonexistent.zip', '/tmp/out', dm)
+        result = self.zip_mgr.extract_zip_with_progress('/nonexistent.zip', '/tmp/out')
         self.assertFalse(result)
 
 

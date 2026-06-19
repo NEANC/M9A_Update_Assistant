@@ -405,7 +405,7 @@ class M9AUpdateAssistant:
                 all_success = False
                 continue
 
-            if not self._zip.extract_zip_with_progress(cli_zip, m9a_folder, self._download):
+            if not self._zip.extract_zip_with_progress(cli_zip, m9a_folder):
                 self.logger.critical(f"解压 CLI ZIP 失败: {m9a_folder}")
                 all_success = False
                 continue
@@ -422,8 +422,7 @@ class M9AUpdateAssistant:
                     self.config.gui_zip_pattern,
                     self.config.temp_folder,
                     self.config.m9a_folders,
-                    self._download,
-                    self._github,
+                    gh_client=self._github,
                 ):
                     self.logger.critical(f"提取 deps 文件夹失败: {m9a_folder}")
                     all_success = False
@@ -558,7 +557,7 @@ def parse_command_line_args() -> argparse.Namespace:
                         help="强制更新自身到最新版本")
     # M9A 版本控制
     parser.add_argument("--m9a-version", type=str, default="",
-                        help="指定 M9A 目标版本（如 3.28.6 或 v3.28.6）")
+                        help="指定 M9A 目标版本")
     # 其他
     parser.add_argument("--not-delete", action="store_true",
                         help="不删除临时文件")

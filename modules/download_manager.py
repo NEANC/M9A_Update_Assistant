@@ -7,9 +7,14 @@ import requests
 
 from pathlib import Path
 
+from modules.progress_bar import (
+    tqdm, BAR_FORMAT,
+    format_ok, format_error,
+)
+
 
 class DownloadManager:
-    """下载管理器，负责文件下载、进度显示、缓存检查"""
+    """下载管理器，负责文件下载与缓存检查"""
 
     def __init__(self, proxy: str, temp_folder: str, logger: logging.Logger):
         """
@@ -23,24 +28,6 @@ class DownloadManager:
         self.proxy = proxy
         self.temp_folder = temp_folder
         self.logger = logger
-        self._last_progress_time = 0.0
-
-    def print_progress(self, prefix: str, progress: float, current_mb: float, total_mb: float) -> None:
-        """打印进度条到控制台，内置 200ms 节流"""
-        now = time.monotonic()
-        if now - self._last_progress_time < 0.2 and progress < 100.0:
-            return
-        self._last_progress_time = now
-        print(f"\r{prefix}: {progress:.1f}% ({current_mb:.2f} MB / {total_mb:.2f} MB)", end="", flush=True)
-
-    @staticmethod
-    def clear_progress_line() -> None:
-        """清除控制台当前行的进度条输出"""
-        print("\r" + " " * 80 + "\r", end="", flush=True)
-
-    def reset_progress_timer(self) -> None:
-        """重置进度节流计时器"""
-        self._last_progress_time = 0.0
 
     def download_file_with_progress(self, url: str, save_path: str) -> bool:
         """
@@ -77,23 +64,29 @@ class DownloadManager:
                     downloaded_size = 0
 
                     if total_size > 0:
-                        self.logger.info(f"获取到文件大小: {total_size / (1024 * 1024):.2f} MB")
+                        self.logger.debug(f"获取到文件大小: {total_size / (1024 * 1024):.2f} MB")
 
                     with open(save_path, 'wb') as f:
                         chunk_size = 1048576
-                        for chunk in response.iter_content(chunk_size=chunk_size):
-                            if chunk:
-                                f.write(chunk)
-                                downloaded_size += len(chunk)
+                        with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
+                                   desc=f"下载 {file_name}", bar_format=BAR_FORMAT,
+                                   disable=total_size <= 0, leave=False) as pbar:
+                            try:
+                                for chunk in response.iter_content(chunk_size=chunk_size):
+                                    if chunk:
+                                        f.write(chunk)
+                                        chunk_len = len(chunk)
+                                        downloaded_size += chunk_len
+                                        if total_size > 0:
+                                            pbar.update(chunk_len)
+                            except Exception:
+                                pbar.leave = True  # 错误时保留进度条
+                                raise
 
-                                if total_size > 0:
-                                    self.print_progress("下载进度", (downloaded_size / total_size) * 100,
-                                                        downloaded_size / (1024 * 1024), total_size / (1024 * 1024))
+                    # ── 完成提示（亮绿色） ──
+                    print(format_ok("下载", file_name, save_path, downloaded_size))
 
-                    self.clear_progress_line()
-                    self.reset_progress_timer()
-
-                    self.logger.info(f"下载完成，文件大小: {downloaded_size / (1024 * 1024):.2f} MB，保存路径: {save_path}")
+                    self.logger.debug(f"下载完成，文件大小: {downloaded_size / (1024 * 1024):.2f} MB，保存路径: {save_path}")
                     return True
             except requests.RequestException as e:
                 self.logger.error(f"下载文件失败: {e}")
@@ -102,6 +95,7 @@ class DownloadManager:
                     time.sleep(retry_interval)
                     continue
                 else:
+                    print(format_error(f"下载 {file_name}", str(e)))
                     return False
             except Exception as e:
                 self.logger.error(f"下载文件时发生错误: {e}")
@@ -110,6 +104,7 @@ class DownloadManager:
                     time.sleep(retry_interval)
                     continue
                 else:
+                    print(format_error(f"下载 {file_name}", str(e)))
                     return False
 
         return False
