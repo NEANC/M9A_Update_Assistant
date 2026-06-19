@@ -40,23 +40,7 @@ class UpdateState:
         """初始化状态对象，设置默认值"""
         self._config = configparser.ConfigParser(strict=False)
         self._ensure_defaults()
-        self._file_path = self._resolve_file_path()
-
-    @staticmethod
-    def _get_exe_path() -> Path:
-        """
-        获取当前可执行文件的真实路径
-        sys.argv[0] 在所有打包模式下均指向用户双击的真实 exe
-        """
-        argv_exe = Path(sys.argv[0]).resolve()
-        if argv_exe.suffix.lower() == '.exe':
-            return argv_exe
-        return Path(sys.executable).resolve()
-
-    @staticmethod
-    def _resolve_file_path() -> Path:
-        """解析状态文件路径，与可执行文件同目录"""
-        return UpdateState._get_exe_path().with_name(UpdateState.STATE_FILE_NAME)
+        self._file_path = Path(sys.argv[0]).resolve().with_name(UpdateState.STATE_FILE_NAME)
 
     def _ensure_defaults(self) -> None:
         """确保所有节和键存在"""
@@ -75,7 +59,7 @@ class UpdateState:
         Returns:
             UpdateState 实例，若文件不存在或损坏则返回 None
         """
-        file_path = cls._resolve_file_path()
+        file_path = Path(sys.argv[0]).resolve().with_name(cls.STATE_FILE_NAME)
         if not file_path.exists():
             return None
 
