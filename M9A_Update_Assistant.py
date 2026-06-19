@@ -551,7 +551,7 @@ def main():
     # ── 仅检查自身更新模式 ──
     if any(flag in sys.argv for flag in ('-U', '--update', '--Update')):
         print_info()
-        force = any(f in sys.argv for f in ('-f', '--update-force', '--Update-force'))
+        force = any(f in sys.argv for f in ('-f', '-F', '--update-force', '--Update-force', '--Update-Force'))
         assistant = M9AUpdateAssistant()
         if assistant.check_self_update(force=force):
             assistant.logger.info("已将新版本下载到临时文件夹，即将退出以完成更新...")
