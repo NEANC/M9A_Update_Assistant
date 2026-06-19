@@ -554,8 +554,6 @@ def main():
         force = any(f in sys.argv for f in ('-f', '--update-force', '--Update-force'))
         assistant = M9AUpdateAssistant()
         if assistant.check_self_update(force=force):
-            if force:
-                assistant.logger.info("强制执行 Build 版本更新")
             assistant.logger.info("已将新版本下载到临时文件夹，即将退出以完成更新...")
             sys.exit(0)
         else:

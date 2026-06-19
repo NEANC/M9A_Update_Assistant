@@ -295,7 +295,7 @@ class SelfUpdater:
                         self.logger.error("版本号校验错误，跳过更新")
                     return False
             else:
-                self.logger.info(f"强制更新模式，跳过版本比对，目标版本: {latest_version}")
+                self.logger.info(f"检测到 --Update-Force，将强制更新到: {latest_version} 版本")
 
             existing_state = UpdateState.load()
             if existing_state and existing_state.get("State", "state", fallback="") == "failed_disabled":
