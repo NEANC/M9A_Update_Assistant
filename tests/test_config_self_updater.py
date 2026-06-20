@@ -259,7 +259,7 @@ def _suppress_self_updater_logs():
 
 def _cleanup_state_file():
     """清理可能残留的 update_state.ini"""
-    ini_path = UpdateState._resolve_file_path()
+    ini_path = Path(sys.argv[0]).resolve().with_name(UpdateState.STATE_FILE_NAME)
     try:
         ini_path.unlink(missing_ok=True)
     except OSError:

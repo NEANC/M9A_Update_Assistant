@@ -105,6 +105,48 @@ class GitHubReleaseClient:
 
         return None
 
+    def get_release_by_tag(self, tag_name: str,
+                            max_retries: int = 3,
+                            retry_interval: int = 10) -> Optional[Dict]:
+        """
+        根据 tag 名称获取指定 GitHub release 信息
+
+        Args:
+            tag_name: 目标 tag 名称（允许不带 'v' 前缀）
+            max_retries: 最大重试次数
+            retry_interval: 重试间隔（秒）
+
+        Returns:
+            Dict: release 信息字典，如果获取失败则返回 None
+        """
+        v_tag = tag_name if tag_name.startswith('v') else f"v{tag_name}"
+
+        for attempt in range(max_retries):
+            try:
+                headers = {'User-Agent': 'M9A-Update-Assistant'}
+                proxies = {'http': self.proxy, 'https': self.proxy} if self.proxy else None
+                api_url = f"https://api.github.com/repos/{self.repo}/releases/tags/{v_tag}"
+                response = requests.get(api_url, headers=headers, proxies=proxies, timeout=30)
+                if response.status_code == 404:
+                    self.logger.error(f"未找到 tag 为 {v_tag} 的 release")
+                    return None
+                response.raise_for_status()
+                release_info = response.json()
+                self.logger.info(f"已获取指定版本 release: {release_info.get('tag_name', v_tag)}")
+                return release_info
+            except requests.RequestException as e:
+                self.logger.error(f"获取指定 release (tag={v_tag}) 失败: {e}")
+                if attempt < max_retries - 1:
+                    self.logger.info(f"等待 {retry_interval} 秒后重试...")
+                    time.sleep(retry_interval)
+            except Exception as e:
+                self.logger.error(f"获取指定 release 时发生错误: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_interval)
+
+        self.logger.error(f"获取指定 release (tag={v_tag}) 失败，已达到最大重试次数")
+        return None
+
     def parse_release_keywords(self, release_info: Dict) -> Dict[str, Any]:
         """
         解析 release 的 body 字段，提取 CLI 和 GUI 版本的关键词

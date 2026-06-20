@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from modules.progress_bar import tqdm, BAR_FORMAT, format_ok, format_error
+
 
 class M9AUpdater:
     """M9A 更新器，负责备份、清理、部署、回写 config"""
@@ -33,6 +35,62 @@ class M9AUpdater:
             return archive_folder_path
         program_root = Path(sys.argv[0]).resolve().parent
         return str(program_root / archive_folder_path)
+
+    @staticmethod
+    def _walk_dir_size(path: Path) -> int:
+        """递归计算目录总大小（字节）"""
+        total = 0
+        try:
+            for root, _, filenames in os.walk(path):
+                for fn in filenames:
+                    total += (Path(root) / fn).stat().st_size
+        except OSError:
+            pass
+        return total
+
+    @staticmethod
+    def _copy_tree_with_progress(src: Path, dst: Path, desc: str,
+                                  logger: logging.Logger) -> bool:
+        """
+        带 tqdm 进度条的目录拷贝
+
+        Args:
+            src: 源路径
+            dst: 目标路径
+            desc: tqdm 描述
+            logger: 日志记录器
+
+        Returns:
+            是否成功
+        """
+        files_to_copy = []
+        total_size = 0
+        for root, _, filenames in os.walk(src):
+            for fn in filenames:
+                fp = Path(root) / fn
+                rel = fp.relative_to(src)
+                files_to_copy.append((fp, dst / rel))
+                total_size += fp.stat().st_size
+
+        if not files_to_copy:
+            logger.debug(f"空目录，跳过拷贝: {src}")
+            return True
+
+        try:
+            dst.mkdir(parents=True, exist_ok=True)
+            with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
+                       desc=desc, bar_format=BAR_FORMAT, leave=False) as pbar:
+                for file_src, file_dst in files_to_copy:
+                    file_dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(file_src, file_dst)
+                    pbar.update(file_src.stat().st_size)
+
+            return True
+        except (IOError, OSError, shutil.Error) as e:
+            pbar.leave = True
+            print(format_error(desc, str(e)))
+            logger.error(f"拷贝失败: {e}")
+            return False
 
     @staticmethod
     def get_version_from_interface(m9a_folder: str, fallback_version: str = '') -> str:
@@ -116,9 +174,14 @@ class M9AUpdater:
                 self.logger.info(f"删除旧备份目录: {archive_path.parent}")
 
             archive_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(m9a_config_path, archive_path, dirs_exist_ok=True)
-            self.logger.info(f"config 文件夹已备份到: {archive_path}")
+            success = self._copy_tree_with_progress(
+                m9a_config_path, archive_path,
+                f"备份 {backup_name}/config", self.logger,
+            )
+            if not success:
+                return None
 
+            print(format_ok("备份", backup_name + "/config", str(archive_path), self._walk_dir_size(m9a_config_path)))
             return version
         except (IOError, OSError, shutil.Error) as e:
             self.logger.error(f"备份 config 文件夹失败: {e}")
@@ -181,9 +244,14 @@ class M9AUpdater:
             return False
 
         try:
-            self.logger.info(f"config 文件夹正在回写：{archive_config_path} -> {m9a_config_path}")
-            shutil.copytree(archive_config_path, m9a_config_path, dirs_exist_ok=True)
-            self.logger.info(f"config 文件夹已回写到: {m9a_config_path}")
+            success = self._copy_tree_with_progress(
+                archive_config_path, m9a_config_path,
+                f"回写 {backup_name}/config", self.logger,
+            )
+            if not success:
+                return False
+
+            print(format_ok("回写", backup_name + "/config", str(m9a_config_path), self._walk_dir_size(archive_config_path)))
             return True
         except (IOError, OSError, shutil.Error) as e:
             self.logger.error(f"回写 config 文件夹失败: {e}")

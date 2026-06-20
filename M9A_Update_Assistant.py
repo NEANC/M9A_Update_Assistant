@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
+import argparse
 import logging
 import os
 import shutil
@@ -111,45 +112,56 @@ class M9AUpdateAssistant:
         """验证配置"""
         return self.config.validate()
 
-    def _collect_outdated_folders(self, latest_version: str) -> List[str]:
+    def _collect_outdated_folders(self, target_version: str, force: bool = False) -> List[str]:
         """
-        对比各 M9A 文件夹本地版本与 GitHub 最新版本
+        对比各 M9A 文件夹本地版本与目标版本
 
         Args:
-            latest_version: GitHub 最新版本号
+            target_version: 目标版本号
+            force: 是否强制模式（指定版本时启用，支持降级）
 
         Returns:
             需要更新的 M9A 文件夹路径列表
         """
-        latest_ver_tuple = SelfUpdater.version_to_tuple(latest_version)
-        if not latest_ver_tuple:
-            self.logger.error(f"GitHub 版本号解析失败: {latest_version}，将强制更新所有 M9A")
+        target_ver_tuple = SelfUpdater.version_to_tuple(target_version)
+        if not target_ver_tuple:
+            self.logger.error(f"版本号解析失败: {target_version}，将强制更新所有 M9A")
             return list(self.config.m9a_folders)
 
         outdated = []
         for m9a_folder in self.config.m9a_folders:
             if not os.path.exists(m9a_folder):
-                self.logger.info(f"{m9a_folder} 目录不存在，将创建并部署最新版本")
+                self.logger.info(f"{m9a_folder} 目录不存在，将创建并部署 {target_version}")
                 outdated.append(m9a_folder)
                 continue
 
             local_version = M9AUpdater.get_version_from_interface(m9a_folder)
             if not local_version:
-                self.logger.warning(f"{m9a_folder} 未读取到本地版本号，将强制更新到 {latest_version}")
+                self.logger.warning(f"{m9a_folder} 未读取到本地版本号，将强制更新到 {target_version}")
                 outdated.append(m9a_folder)
                 continue
 
             local_ver_tuple = SelfUpdater.version_to_tuple(local_version)
             if not local_ver_tuple:
-                self.logger.warning(f"{m9a_folder} 本地版本号解析失败: {local_version}，将强制更新到 {latest_version}")
+                self.logger.warning(f"{m9a_folder} 本地版本号解析失败: {local_version}，将强制更新到 {target_version}")
                 outdated.append(m9a_folder)
                 continue
 
-            if local_ver_tuple >= latest_ver_tuple:
-                self.logger.info(f"{m9a_folder} 已是最新版本，跳过更新")
+            if force:
+                # 指定版本模式：只要本地不等于目标就更新（支持降级）
+                if local_ver_tuple == target_ver_tuple:
+                    self.logger.info(f"{m9a_folder} 已与指定版本 {target_version} 一致，跳过更新")
+                else:
+                    direction = "降级" if local_ver_tuple > target_ver_tuple else "升级"
+                    self.logger.info(f"{m9a_folder} 将从 {local_version} {direction}到 {target_version}")
+                    outdated.append(m9a_folder)
             else:
-                self.logger.info(f"{m9a_folder} 将更新到 {latest_version}")
-                outdated.append(m9a_folder)
+                # 常规模式：仅升级
+                if local_ver_tuple >= target_ver_tuple:
+                    self.logger.info(f"{m9a_folder} 已是最新版本，跳过更新")
+                else:
+                    self.logger.info(f"{m9a_folder} 将更新到 {target_version}")
+                    outdated.append(m9a_folder)
 
         return outdated
 
@@ -287,12 +299,21 @@ class M9AUpdateAssistant:
         self.logger.critical("下载文件校验失败，已达到最大重试次数")
         return None
 
-    def run_update(self) -> bool:
+    def run_update(self, target_version: str = '') -> bool:
         """
         执行完整的更新流程
+
+        Args:
+            target_version: 指定目标版本号（为空则获取最新版本，支持不带 'v' 前缀）
         """
-        self.logger.info("正在从 GitHub 获取最新版本信息...")
-        release_info = self._github.get_latest_release_info()
+        if target_version:
+            v_tag = target_version if target_version.startswith('v') else f"v{target_version}"
+            self.logger.info(f"指定目标版本: {v_tag}，正在从 GitHub 获取对应 release...")
+            release_info = self._github.get_release_by_tag(target_version)
+        else:
+            self.logger.info("正在从 GitHub 获取最新版本信息...")
+            release_info = self._github.get_latest_release_info()
+
         if not release_info:
             self.logger.critical("无法获取 GitHub release 信息，更新终止")
             return False
@@ -302,7 +323,7 @@ class M9AUpdateAssistant:
             self.logger.critical("GitHub release 信息中未找到版本号，更新终止")
             return False
 
-        outdated_folders = self._collect_outdated_folders(latest_version)
+        outdated_folders = self._collect_outdated_folders(latest_version, force=bool(target_version))
         if not outdated_folders:
             self.logger.info("所有 M9A 已是最新版本，无需更新")
             self._cleanup_old_logs()
@@ -384,7 +405,7 @@ class M9AUpdateAssistant:
                 all_success = False
                 continue
 
-            if not self._zip.extract_zip_with_progress(cli_zip, m9a_folder, self._download):
+            if not self._zip.extract_zip_with_progress(cli_zip, m9a_folder):
                 self.logger.critical(f"解压 CLI ZIP 失败: {m9a_folder}")
                 all_success = False
                 continue
@@ -401,8 +422,7 @@ class M9AUpdateAssistant:
                     self.config.gui_zip_pattern,
                     self.config.temp_folder,
                     self.config.m9a_folders,
-                    self._download,
-                    self._github,
+                    gh_client=self._github,
                 ):
                     self.logger.critical(f"提取 deps 文件夹失败: {m9a_folder}")
                     all_success = False
@@ -455,8 +475,13 @@ def _clean_self_update_cache(logger: logging.Logger) -> None:
     SelfUpdater.clean_self_update_cache(temp_folder, logger)
 
 
-def _cleanup_update_residue(logger: logging.Logger) -> None:
-    """清理上次成功更新后的残留文件"""
+def _cleanup_update_residue(logger: logging.Logger, not_delete: bool = False) -> None:
+    """清理上次成功更新后的残留文件
+
+    Args:
+        logger: 日志记录器
+        not_delete: 是否跳过缓存清理（对应 --not-delete 参数）
+    """
     state = UpdateState.load()
     if not state:
         return
@@ -485,7 +510,7 @@ def _cleanup_update_residue(logger: logging.Logger) -> None:
                 pass
 
         # ── 清理自更新缓存 ──
-        if '--not-delete' not in sys.argv:
+        if not not_delete:
             _clean_self_update_cache(logger)
 
         state.delete()
@@ -509,16 +534,47 @@ def _cleanup_update_residue(logger: logging.Logger) -> None:
         logger.warning(f"将跳过版本 {failed_ver} 的自动更新，等待远端发布新版本")
 
 
+def parse_command_line_args() -> argparse.Namespace:
+    """解析命令行参数
+
+    Returns:
+        argparse.Namespace: 解析后的命令行参数
+    """
+    parser = argparse.ArgumentParser(description="M9A Update Assistant")
+    # 内部运行模式（不在帮助中显示）
+    parser.add_argument("--self-update-verify", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-sha256", type=str, default="", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-version", type=str, default="", help=argparse.SUPPRESS)
+    parser.add_argument("--retry-update", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--update-failed", action="store_true", help=argparse.SUPPRESS)
+    # 自更新检查模式
+    parser.add_argument("--update", "--Update", action="store_true",
+                        dest="update", default=False,
+                        help="仅检查自身更新")
+    parser.add_argument("--update-force", "--Update-force", "--Update-Force",
+                        action="store_true",
+                        dest="update_force", default=False,
+                        help="强制更新自身到最新版本")
+    # M9A 版本控制
+    parser.add_argument("--m9a-version", type=str, default="",
+                        help="指定 M9A 目标版本")
+    # 其他
+    parser.add_argument("--not-delete", action="store_true",
+                        help="不删除临时文件")
+    return parser.parse_args()
+
+
 def main():
     """主函数"""
+    args = parse_command_line_args()
 
     # ── 新版验证模式 ──
-    if '--self-update-verify' in sys.argv:
+    if args.self_update_verify:
         exit_code = SelfUpdater.self_update_verify()
         sys.exit(exit_code)
 
     # ── 重试更新模式 ──
-    if '--retry-update' in sys.argv:
+    if args.retry_update:
         logger = logging.getLogger("M9AUpdateAssistant")
         logger.info("正在重试自更新...")
         assistant = M9AUpdateAssistant()
@@ -529,7 +585,7 @@ def main():
         return
 
     # ── 更新失败模式 ──
-    if '--update-failed' in sys.argv:
+    if args.update_failed:
         print_info()
         logger = logging.getLogger("M9AUpdateAssistant")
         state = UpdateState.load()
@@ -537,7 +593,7 @@ def main():
             failed_ver = state["new_version"]
             logger.critical(f"自更新失败：版本 {failed_ver} 多次验证不通过")
             print(f"\n软件自动更新失败，版本 {failed_ver} 已被标记为不可用。")
-            print(f"您可以向开发人员提交 {script_dir / 'update.log'} 反馈此问题。")
+            print(f"您可以向开发人员提交 {Path(sys.argv[0]).resolve().parent / 'update.log'} 反馈此问题。")
             print(f"已回退到 {VERSION} 版本，后续将跳过 {failed_ver} 版本的自动更新。")
         else:
             logger.critical("自更新失败，但无法读取状态信息")
@@ -546,14 +602,13 @@ def main():
         return
 
     # ── 正常启动：清理上次更新残留 ──
-    _cleanup_update_residue(logging.getLogger("M9AUpdateAssistant"))
+    _cleanup_update_residue(logging.getLogger("M9AUpdateAssistant"), not_delete=args.not_delete)
 
-    # ── 仅检查自身更新模式 ──
-    if any(flag in sys.argv for flag in ('-U', '--update', '--Update')):
+    # ── 仅检查自身更新 / 强制更新自身模式 ──
+    if args.update or args.update_force:
         print_info()
-        force = any(f in sys.argv for f in ('-f', '-F', '--update-force', '--Update-force', '--Update-Force'))
         assistant = M9AUpdateAssistant()
-        if assistant.check_self_update(force=force):
+        if assistant.check_self_update(force=args.update_force):
             assistant.logger.info("已将新版本下载到临时文件夹，即将退出以完成更新...")
             sys.exit(0)
         else:
@@ -565,14 +620,16 @@ def main():
         print_info()
         assistant = M9AUpdateAssistant()
 
-        if '--not-delete' in sys.argv:
+        if args.not_delete:
             assistant.keep_temp = True
 
         if not assistant.validate_config():
             assistant.logger.critical("错误的配置，请修改配置文件后重新运行。")
             sys.exit(1)
 
-        success = assistant.run_update()
+        # 去除可能的前导 'v'，run_update 内部会自行标准化
+        m9a_version = args.m9a_version.lstrip("v")
+        success = assistant.run_update(target_version=m9a_version)
 
         need_exit = assistant.check_self_update()
         if need_exit:

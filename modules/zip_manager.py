@@ -10,8 +10,11 @@ import zipfile
 from pathlib import Path
 from typing import Dict, Optional
 
-from modules.download_manager import DownloadManager
 from modules.github_release_client import GitHubReleaseClient
+from modules.progress_bar import (
+    tqdm, BAR_FORMAT,
+    format_ok, format_error,
+)
 
 
 class ZipManager:
@@ -134,19 +137,18 @@ class ZipManager:
         self.logger.info(f"本地:   {actual}")
         return True
 
-    def extract_zip_with_progress(self, zip_path: str, extract_to: str,
-                                   download_manager: DownloadManager) -> bool:
+    def extract_zip_with_progress(self, zip_path: str, extract_to: str) -> bool:
         """
         解压 ZIP 文件并显示进度
 
         Args:
             zip_path: ZIP 文件路径
             extract_to: 解压目标路径
-            download_manager: DownloadManager 实例（用于进度条）
 
         Returns:
             bool: 操作是否成功
         """
+
         if not os.path.exists(zip_path):
             self.logger.error(f"ZIP 文件不存在: {zip_path}")
             return False
@@ -159,22 +161,26 @@ class ZipManager:
                 total_size = sum(file.file_size for file in zip_ref.filelist)
 
                 self.logger.info(f"开始解压: {zip_path}")
-                self.logger.info(f"文件数量: {len(file_list)}, 总大小: {total_size / (1024 * 1024):.2f} MB")
+                self.logger.debug(f"文件数量: {len(file_list)}, 总大小: {total_size / (1024 * 1024):.2f} MB")
 
-                extracted_size = 0
-                for file_info in zip_ref.infolist():
-                    zip_ref.extract(file_info, extract_to)
-                    extracted_size += file_info.file_size
-                    download_manager.print_progress("解压进度", (extracted_size / total_size) * 100,
-                                                    extracted_size / (1024 * 1024), total_size / (1024 * 1024))
+                with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
+                           desc="解压", bar_format=BAR_FORMAT, leave=False) as pbar:
+                    try:
+                        for file_info in zip_ref.infolist():
+                            zip_ref.extract(file_info, extract_to)
+                            pbar.update(file_info.file_size)
+                    except Exception:
+                        pbar.leave = True  # 错误时保留进度条
+                        raise
 
-                download_manager.clear_progress_line()
-                download_manager.reset_progress_timer()
+            # ── 完成提示（亮绿色） ──
+            print(format_ok("解压", Path(zip_path).name, extract_to, total_size))
 
-            self.logger.info(f"解压完成: {zip_path} -> {extract_to}")
+            self.logger.debug(f"解压完成: {zip_path} -> {extract_to}")
             return True
         except (zipfile.BadZipFile, IOError, OSError) as e:
             self.logger.error(f"解压 ZIP 文件失败: {e}")
+            print(format_error("解压", str(e)))
             return False
 
     def check_lite_zip_has_deps(self, zip_path: str) -> bool:
@@ -226,8 +232,7 @@ class ZipManager:
                                     gui_zip_pattern: str,
                                     temp_folder: str,
                                     m9a_folders: list,
-                                    download_manager: DownloadManager,
-                                    gh_client: GitHubReleaseClient) -> bool:
+                                    gh_client: GitHubReleaseClient = None) -> bool:
         """
         从 GUI ZIP 文件中提取 deps 文件夹到 M9A 文件夹
 
@@ -237,7 +242,6 @@ class ZipManager:
             gui_zip_pattern: GUI ZIP 匹配模式
             temp_folder: 临时文件夹
             m9a_folders: M9A 文件夹列表
-            download_manager: 下载管理器
             gh_client: GitHub Release 客户端
 
         Returns:
@@ -279,19 +283,23 @@ class ZipManager:
                 self.logger.info(f"开始提取 deps 文件夹: {len(deps_files)} 个文件, "
                                 f"总大小: {total_size / (1024 * 1024):.2f} MB")
 
-                extracted_size = 0
-                for file_name in deps_files:
-                    file_info = zip_ref.getinfo(file_name)
-                    zip_ref.extract(file_info, m9a_path)
-                    extracted_size += file_info.file_size
-                    download_manager.print_progress("提取 deps", (extracted_size / total_size) * 100,
-                                                    extracted_size / (1024 * 1024), total_size / (1024 * 1024))
+                with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
+                           desc="提取 deps ", bar_format=BAR_FORMAT, leave=False) as pbar:
+                    try:
+                        for file_name in deps_files:
+                            file_info = zip_ref.getinfo(file_name)
+                            zip_ref.extract(file_info, m9a_path)
+                            pbar.update(file_info.file_size)
+                    except Exception:
+                        pbar.leave = True  # 错误时保留进度条
+                        raise
 
-                download_manager.clear_progress_line()
-                download_manager.reset_progress_timer()
+            # ── 完成提示（亮绿色） ──
+            print(format_ok("提取 deps ", gui_zip_path.name, str(m9a_path), total_size))
 
-            self.logger.info(f"deps 文件夹已提取到: {m9a_path}")
+            self.logger.debug(f"deps 文件夹已提取到: {m9a_path}")
             return True
         except (zipfile.BadZipFile, IOError, OSError) as e:
             self.logger.error(f"提取 deps 文件夹失败: {e}")
+            print(format_error("提取 deps ", str(e)))
             return False
