@@ -185,6 +185,12 @@ cython_debug/
 .cursorindexingignore
 /更新前存档
 /测试存档
+/self_updater/
+/logger/
+/config_ini/
+/.trae/
+/*.yaml
+/*.yml
 
 # AI 生成文档
 gpt*.md
