@@ -76,18 +76,21 @@ class M9AUpdater:
             logger.debug(f"空目录，跳过拷贝: {src}")
             return True
 
+        pbar = None
         try:
             dst.mkdir(parents=True, exist_ok=True)
-            with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
-                       desc=desc, bar_format=BAR_FORMAT, leave=False) as pbar:
-                for file_src, file_dst in files_to_copy:
-                    file_dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(file_src, file_dst)
-                    pbar.update(file_src.stat().st_size)
-
+            pbar = tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
+                       desc=desc, bar_format=BAR_FORMAT, leave=False)
+            for file_src, file_dst in files_to_copy:
+                file_dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(file_src, file_dst)
+                pbar.update(file_src.stat().st_size)
+            pbar.close()
             return True
         except (IOError, OSError, shutil.Error) as e:
-            pbar.leave = True
+            if pbar:
+                pbar.leave = True
+                pbar.close()
             print(format_error(desc, str(e)))
             logger.error(f"拷贝失败: {e}")
             return False
