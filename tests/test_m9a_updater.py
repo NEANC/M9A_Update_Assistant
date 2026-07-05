@@ -9,10 +9,211 @@ import tempfile
 import unittest
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.m9a_updater import M9AUpdater
+from modules.m9a_updater import (
+    M9AUpdater,
+    _parse_version_to_tuple,
+    _collect_archive_versions,
+    find_best_config_version,
+)
+
+
+class TestParseVersionToTuple(unittest.TestCase):
+    """_parse_version_to_tuple 函数测试"""
+
+    def test_standard_semver(self):
+        """标准三位版本号"""
+        self.assertEqual(_parse_version_to_tuple('v3.28.3'), (3, 28, 3, 3, 0))
+
+    def test_no_v_prefix(self):
+        """无 v 前缀"""
+        self.assertEqual(_parse_version_to_tuple('3.28.3'), (3, 28, 3, 3, 0))
+
+    def test_two_component(self):
+        """两位版本号"""
+        self.assertEqual(_parse_version_to_tuple('v2.0'), (2, 0, 0, 3, 0))
+
+    def test_single_component(self):
+        """一位版本号"""
+        self.assertEqual(_parse_version_to_tuple('v1'), (1, 0, 0, 3, 0))
+
+    def test_empty_string(self):
+        """空字符串"""
+        self.assertEqual(_parse_version_to_tuple(''), ())
+
+    def test_invalid_string(self):
+        """无效字符串"""
+        self.assertEqual(_parse_version_to_tuple('abc'), ())
+
+    def test_prerelease_suffix(self):
+        """预发布后缀参与排序"""
+        self.assertEqual(_parse_version_to_tuple('v3.19.0-beta1'), (3, 19, 0, 1, 1))
+
+    def test_build_suffix(self):
+        """构建后缀不影响稳定版排序"""
+        self.assertEqual(_parse_version_to_tuple('v1.10.1+build.gb6da5ee'), (1, 10, 1, 3, 0))
+
+
+class TestCollectArchiveVersions(unittest.TestCase):
+    """_collect_archive_versions 函数测试"""
+
+    def test_empty_dir(self):
+        """空目录"""
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _collect_archive_versions(Path(tmp), 'Z-M9A')
+            self.assertEqual(result, [])
+
+    def test_nonexistent_dir(self):
+        """不存在的目录"""
+        result = _collect_archive_versions(Path('/nonexistent/archive'), 'Z-M9A')
+        self.assertEqual(result, [])
+
+    def test_sorted_descending(self):
+        """降序排列"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            for ver in ('v3.18.0', 'v3.20.0', 'v3.19.0', 'v4.0.0'):
+                ver_dir = archive / ver
+                (ver_dir / 'Z-M9A' / 'config').mkdir(parents=True)
+            result = _collect_archive_versions(archive, 'Z-M9A')
+            self.assertEqual(result, [((4, 0, 0, 3, 0), 'v4.0.0'), ((3, 20, 0, 3, 0), 'v3.20.0'),
+                                       ((3, 19, 0, 3, 0), 'v3.19.0'), ((3, 18, 0, 3, 0), 'v3.18.0')])
+
+    def test_skips_dirs_without_config(self):
+        """跳过不含 config 的版本目录"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            (archive / 'v3.20.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+            (archive / 'v3.19.0').mkdir()  # 无 backup_name/config
+            (archive / 'v3.18.0' / 'Z-M9A').mkdir(parents=True)  # 有 backup_name 但无 config
+            result = _collect_archive_versions(archive, 'Z-M9A')
+            self.assertEqual(result, [((3, 20, 0, 3, 0), 'v3.20.0')])
+
+    def test_skips_unparseable_version_names(self):
+        """跳过无法解析的版本目录名"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            (archive / 'not-a-version' / 'Z-M9A' / 'config').mkdir(parents=True)
+            (archive / 'v3.20.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+            result = _collect_archive_versions(archive, 'Z-M9A')
+            self.assertEqual(result, [((3, 20, 0, 3, 0), 'v3.20.0')])
+
+
+class TestFindBestConfigVersion(unittest.TestCase):
+    """find_best_config_version 函数测试"""
+
+    def setUp(self):
+        self.logger = logging.getLogger("TestFindBest")
+        self.logger.setLevel(logging.CRITICAL)
+
+    def test_exact_match(self):
+        """精确命中目标版本"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            (archive / 'v3.19.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+            (archive / 'v3.20.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+
+            result = find_best_config_version(
+                archive, 'Z-M9A', 'v3.20.0', 'v3.19.0', self.logger,
+            )
+            self.assertEqual(result, 'v3.19.0')
+
+    def test_target_not_found_use_lower(self):
+        """目标版本不在存档中，使用更低版本"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            (archive / 'v3.18.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+            (archive / 'v3.20.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+
+            result = find_best_config_version(
+                archive, 'Z-M9A', 'v3.20.0', 'v3.19.0', self.logger,
+            )
+            self.assertEqual(result, 'v3.18.0')
+
+    def test_no_lower_version_fallback(self):
+        """所有存档版本均高于目标，回退到当前版本"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            (archive / 'v3.20.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+
+            result = find_best_config_version(
+                archive, 'Z-M9A', 'v3.20.0', 'v3.19.0', self.logger,
+            )
+            self.assertEqual(result, 'v3.20.0')
+
+    def test_empty_archive_fallback(self):
+        """存档目录无可用版本"""
+        with tempfile.TemporaryDirectory() as tmp:
+            result = find_best_config_version(
+                Path(tmp), 'Z-M9A', 'v3.20.0', 'v3.19.0', self.logger,
+            )
+            self.assertEqual(result, 'v3.20.0')
+
+    def test_invalid_target_version_fallback(self):
+        """目标版本号无法解析"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            (archive / 'v3.20.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+
+            result = find_best_config_version(
+                archive, 'Z-M9A', 'v3.20.0', 'not-a-version', self.logger,
+            )
+            self.assertEqual(result, 'v3.20.0')
+
+    def test_stable_target_uses_lower_prerelease_when_no_exact_match(self):
+        """稳定版目标无精确备份时，可使用同版本更低预发布备份"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            (archive / 'v3.19.0-beta1' / 'Z-M9A' / 'config').mkdir(parents=True)
+            (archive / 'v3.18.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+
+            result = find_best_config_version(
+                archive, 'Z-M9A', 'v3.20.0', 'v3.19.0', self.logger,
+            )
+            self.assertEqual(result, 'v3.19.0-beta1')
+
+    def test_prerelease_target_exact_match(self):
+        """目标版本带预发布后缀时，优先按目录名精确匹配"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            (archive / 'v3.19.0-beta1' / 'Z-M9A' / 'config').mkdir(parents=True)
+            (archive / 'v3.19.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+
+            result = find_best_config_version(
+                archive, 'Z-M9A', 'v3.20.0', 'v3.19.0-beta1', self.logger,
+            )
+            self.assertEqual(result, 'v3.19.0-beta1')
+
+    def test_prerelease_target_does_not_use_higher_stable(self):
+        """预发布目标无精确备份时，不使用同版本正式版备份"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            (archive / 'v3.19.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+            (archive / 'v3.18.0' / 'Z-M9A' / 'config').mkdir(parents=True)
+
+            result = find_best_config_version(
+                archive, 'Z-M9A', 'v3.20.0', 'v3.19.0-beta1', self.logger,
+            )
+            self.assertEqual(result, 'v3.18.0')
+
+    def test_prerelease_sort_order_is_deterministic(self):
+        """alpha/beta/rc/stable 使用确定排序"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            for ver in ('v3.19.0-alpha2', 'v3.19.0-beta1', 'v3.19.0-rc1', 'v3.19.0'):
+                (archive / ver / 'Z-M9A' / 'config').mkdir(parents=True)
+
+            result = _collect_archive_versions(archive, 'Z-M9A')
+            self.assertEqual([item[1] for item in result], [
+                'v3.19.0',
+                'v3.19.0-rc1',
+                'v3.19.0-beta1',
+                'v3.19.0-alpha2',
+            ])
 
 
 class TestGetVersionFromInterface(unittest.TestCase):
@@ -223,6 +424,105 @@ class TestBackupAndRestoreConfig(unittest.TestCase):
                 'M9A-win-x86_64-v*-Lite.zip', tmp, gh,
             )
             self.assertIsNone(result)
+
+
+class TestRunUpdateConfigVersionSelection(unittest.TestCase):
+    """run_update 配置版本选择集成测试"""
+
+    def _create_assistant(self, archive_dir, current_version, target_version, m9a_folder):
+        """创建只包含 run_update 所需依赖的助手实例"""
+        from M9A_Update_Assistant import M9AUpdateAssistant
+
+        assistant = object.__new__(M9AUpdateAssistant)
+        assistant.logger = logging.getLogger("TestRunUpdate")
+        assistant.logger.setLevel(logging.CRITICAL)
+        assistant.keep_temp = True
+        assistant._cleanup_old_logs = Mock()
+        assistant.config = SimpleNamespace(
+            cli_zip_pattern='M9A-win-x86_64-v*-Lite.zip',
+            temp_folder='temp',
+            gui_zip_pattern='M9A-win-x86_64-v*-Full.zip',
+            m9a_folders=[str(m9a_folder)],
+        )
+        assistant._github = Mock()
+        assistant._github.get_release_by_tag.return_value = {'tag_name': target_version}
+        assistant._github.parse_release_keywords.return_value = {'cli': 'Lite', 'gui': 'Full'}
+        assistant._collect_outdated_folders = Mock(return_value=[str(m9a_folder)])
+        assistant._download_latest_release = Mock(return_value={
+            'files': ['C:/cache/M9A-win-x86_64-v3-Lite.zip'],
+            'cli_keyword': 'Lite',
+            'gui_keyword': 'Full',
+            'version': target_version,
+            'cli_has_deps': True,
+        })
+        assistant._zip = Mock()
+        assistant._zip.check_lite_zip_has_deps.return_value = True
+        assistant._zip.extract_zip_with_progress.return_value = True
+        assistant._updater = Mock()
+        assistant._updater.archive_dir = Path(archive_dir)
+        assistant._updater.find_lite_zip.return_value = None
+        assistant._updater.backup_config.return_value = current_version
+        assistant._updater.clean_m9a_folder.return_value = True
+        assistant._updater.restore_config.return_value = True
+        return assistant
+
+    def test_downgrade_uses_target_backup_when_exists(self):
+        """实际降级且目标备份存在时，回写目标版本配置"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / 'archive'
+            m9a_folder = Path(tmp) / 'M9A'
+            m9a_folder.mkdir()
+            backup_name = M9AUpdater.get_backup_name(str(m9a_folder))
+            (archive / 'v3.19.0' / backup_name / 'config').mkdir(parents=True)
+            assistant = self._create_assistant(archive, 'v3.20.0', 'v3.19.0', m9a_folder)
+
+            result = assistant.run_update('v3.19.0')
+
+            self.assertTrue(result)
+            assistant._updater.restore_config.assert_called_once_with(str(m9a_folder), 'v3.19.0')
+
+    def test_downgrade_uses_lower_backup_when_target_missing(self):
+        """实际降级且目标备份不存在时，回写更早版本配置"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / 'archive'
+            m9a_folder = Path(tmp) / 'M9A'
+            m9a_folder.mkdir()
+            backup_name = M9AUpdater.get_backup_name(str(m9a_folder))
+            (archive / 'v3.18.0' / backup_name / 'config').mkdir(parents=True)
+            assistant = self._create_assistant(archive, 'v3.20.0', 'v3.19.0', m9a_folder)
+
+            result = assistant.run_update('v3.19.0')
+
+            self.assertTrue(result)
+            assistant._updater.restore_config.assert_called_once_with(str(m9a_folder), 'v3.18.0')
+
+    def test_downgrade_fallbacks_to_current_when_no_history(self):
+        """实际降级但无历史备份时，回写当前版本备份"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / 'archive'
+            m9a_folder = Path(tmp) / 'M9A'
+            m9a_folder.mkdir()
+            assistant = self._create_assistant(archive, 'v3.20.0', 'v3.19.0', m9a_folder)
+
+            result = assistant.run_update('v3.19.0')
+
+            self.assertTrue(result)
+            assistant._updater.restore_config.assert_called_once_with(str(m9a_folder), 'v3.20.0')
+
+    def test_specified_upgrade_keeps_current_backup(self):
+        """指定版本但实际为升级时，不启用历史配置查找"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / 'archive'
+            m9a_folder = Path(tmp) / 'M9A'
+            m9a_folder.mkdir()
+            backup_name = M9AUpdater.get_backup_name(str(m9a_folder))
+            (archive / 'v3.20.0' / backup_name / 'config').mkdir(parents=True)
+            assistant = self._create_assistant(archive, 'v3.19.0', 'v3.20.0', m9a_folder)
+
+            result = assistant.run_update('v3.20.0')
+
+            self.assertTrue(result)
+            assistant._updater.restore_config.assert_called_once_with(str(m9a_folder), 'v3.19.0')
 
 
 if __name__ == '__main__':

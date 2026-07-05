@@ -19,7 +19,7 @@ from modules.logger_manager import (
     raw_read_save_enabled,
     setup_logger,
 )
-from modules.m9a_updater import M9AUpdater
+from modules.m9a_updater import M9AUpdater, _parse_version_to_tuple, find_best_config_version
 from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater
 from modules.version import VERSION, print_info
@@ -411,7 +411,26 @@ class M9AUpdateAssistant:
                 continue
 
             if old_version:
-                if not self._updater.restore_config(m9a_folder, old_version):
+                # 降级时查找更匹配的历史版本配置
+                old_version_tuple = _parse_version_to_tuple(old_version)
+                target_version_tuple = _parse_version_to_tuple(version)
+                is_downgrade = (
+                    bool(target_version)
+                    and old_version_tuple
+                    and target_version_tuple
+                    and old_version_tuple > target_version_tuple
+                )
+                if is_downgrade:
+                    best_version = find_best_config_version(
+                        self._updater.archive_dir,
+                        M9AUpdater.get_backup_name(m9a_folder),
+                        old_version,
+                        version,
+                        self.logger,
+                    )
+                else:
+                    best_version = old_version
+                if not self._updater.restore_config(m9a_folder, best_version):
                     self.logger.critical(f"回写 config 失败: {m9a_folder}")
                     all_success = False
                     continue

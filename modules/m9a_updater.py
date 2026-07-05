@@ -4,14 +4,131 @@
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from modules.progress_bar import tqdm, BAR_FORMAT, format_ok, format_error
+
+
+VersionKey = Tuple[int, int, int, int, int]
+ArchiveVersion = Tuple[VersionKey, str]
+
+
+def _normalize_version_name(version_str: str) -> str:
+    """规范化版本号字符串，用于目录名精确匹配"""
+    version = version_str.strip()
+    if not version:
+        return ''
+    if version[0].lower() == 'v':
+        return 'v' + version[1:].lower()
+    return 'v' + version.lower()
+
+
+def _parse_version_to_tuple(version_str: str) -> VersionKey:
+    """将版本号字符串解析为可比较的排序键，稳定版高于 rc/beta/alpha"""
+    match = re.match(
+        r'^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$',
+        version_str.strip(),
+        re.IGNORECASE,
+    )
+    if not match:
+        return ()
+
+    major, minor, patch, prerelease = match.groups()
+    core = (int(major), int(minor or 0), int(patch or 0))
+    if not prerelease:
+        return core + (3, 0)
+
+    pre = prerelease.lower()
+    if pre.startswith('alpha'):
+        weight = 0
+    elif pre.startswith('beta'):
+        weight = 1
+    elif pre.startswith('rc'):
+        weight = 2
+    else:
+        weight = -1
+
+    number_match = re.search(r'(\d+)', pre)
+    number = int(number_match.group(1)) if number_match else 0
+    return core + (weight, number)
+
+
+def _collect_archive_versions(archive_dir: Path, backup_name: str) -> List[ArchiveVersion]:
+    """扫描存档目录，收集所有含 {backup_name}/config 的版本排序键和目录名（降序排列）"""
+    versions = []
+    if not archive_dir.exists():
+        return versions
+    for entry in archive_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        version_dir = entry.name
+        if not (entry / backup_name / "config").exists():
+            continue
+        ver_tuple = _parse_version_to_tuple(version_dir)
+        if not ver_tuple:
+            continue
+        versions.append((ver_tuple, version_dir))
+    versions.sort(key=lambda x: (x[0], _normalize_version_name(x[1])), reverse=True)
+    return versions
+
+
+def find_best_config_version(
+    archive_dir: Path,
+    backup_name: str,
+    current_version: str,
+    target_version: str,
+    logger: logging.Logger,
+) -> str:
+    """
+    从存档目录中查找最适合的配置版本
+
+    查找策略：
+    1. 扫描存档目录，收集所有包含 {backup_name}/config 的版本目录
+    2. 版本号降序排列
+    3. 从 target_version 开始向下查找：
+       找到 → 返回该版本号
+       找不到 → 在列表中找下一个更低的版本
+       都没有 → 返回 current_version（回退）
+
+    Args:
+        archive_dir: 存档根目录
+        backup_name: 备份名称（如 Z-M9A）
+        current_version: 当前版本号（作为最终回退值）
+        target_version: 目标版本号（降级目标）
+        logger: 日志记录器
+
+    Returns:
+        最适合的版本号字符串
+    """
+    target_tuple = _parse_version_to_tuple(target_version)
+    if not target_tuple:
+        logger.warning(f"目标版本号解析失败: {target_version}，回退到当前版本: {current_version}")
+        return current_version
+
+    archive_versions = _collect_archive_versions(archive_dir, backup_name)
+    if not archive_versions:
+        logger.debug(f"存档目录无可用版本，回退到当前版本: {current_version}")
+        return current_version
+
+    normalized_target = _normalize_version_name(target_version)
+    for _, ver_dir in archive_versions:
+        if _normalize_version_name(ver_dir) == normalized_target:
+            logger.info(f"降级配置查找: 精确命中目标版本 {ver_dir}")
+            return ver_dir
+
+    for ver_tuple, ver_dir in archive_versions:
+        if ver_tuple < target_tuple:
+            logger.info(f"降级配置查找: 目标版本 {target_version} 无备份，使用更早版本 {ver_dir}")
+            return ver_dir
+
+    logger.info(f"降级配置查找: 所有存档版本均高于目标 {target_version}，回退到当前版本 {current_version}")
+    return current_version
 
 
 class M9AUpdater:
