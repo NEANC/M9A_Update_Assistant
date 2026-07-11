@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
+import hashlib
 import logging
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -711,10 +714,9 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _read_generated(self, filename: str) -> str:
-        """读取生成的 PS1 文件内容"""
+        """读取生成的 PS1 文件内容，缺失时立即失败。"""
         path = os.path.join(self.tmpdir, filename)
-        if not os.path.exists(path):
-            return ""
+        self.assertTrue(os.path.exists(path), f"生成的 PS1 文件不存在: {path}")
         with open(path, 'r', encoding='utf-8-sig') as f:
             return f.read()
 
@@ -766,6 +768,58 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
         content = self._read_generated("M9A_Update_Assistant_Update.ps1")
         self.assertIn("Get-SHA256 $newFile", content,
                       "Update.ps1 中应包含 Get-SHA256 $newFile 调用")
+
+    def test_generated_get_sha256_matches_python_hashlib(self):
+        """生成脚本中的 Get-SHA256 在 Windows PowerShell 中计算正确。"""
+        if sys.platform != 'win32':
+            self.skipTest("仅在 Windows 上验证 powershell.exe 生产路径")
+
+        powershell = shutil.which("powershell.exe")
+        if not powershell:
+            self.skipTest("未找到 powershell.exe")
+
+        test_file = os.path.join(self.tmpdir, "hash-input.txt")
+        data = b"M9A sha256 test data\r\n\x00\xff"
+        with open(test_file, 'wb') as f:
+            f.write(data)
+        expected_hash = hashlib.sha256(data).hexdigest()
+
+        SelfUpdater._generate_helper_ps1(Path(self.tmpdir))
+        content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
+        function_match = re.search(
+            r"(?ms)^function Get-SHA256\(\$filePath\) \{.*?^\}",
+            content,
+        )
+        self.assertIsNotNone(function_match, "应能提取 Get-SHA256 函数定义")
+
+        wrapper_path = os.path.join(self.tmpdir, "invoke_get_sha256.ps1")
+        wrapper_content = (
+            function_match.group(0)
+            + "\r\n$hash = Get-SHA256 -filePath $args[0]\r\n"
+            + "Write-Output $hash\r\n"
+        )
+        with open(wrapper_path, 'w', encoding='utf-8-sig', newline='\r\n') as f:
+            f.write(wrapper_content)
+
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                wrapper_path,
+                test_file,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        actual_hash = result.stdout.strip()
+        self.assertRegex(actual_hash, r"^[0-9a-f]{64}$")
+        self.assertEqual(actual_hash, expected_hash)
 
 
 def _suppress_logs():
