@@ -701,7 +701,7 @@ class TestCleanupUpdateResidue(unittest.TestCase):
 
 
 class TestGeneratedPs1Scripts(unittest.TestCase):
-    """验证生成的 PS1 脚本内容 — 确认 Get-FileHash 已消除且 Get-SHA256 存在"""
+    """验证生成的 PS1 脚本内容 — 确认 Get-SHA256 包含多路径 fallback"""
 
     def setUp(self):
         _suppress_logs()
@@ -718,19 +718,34 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
         with open(path, 'r', encoding='utf-8-sig') as f:
             return f.read()
 
-    def test_helper_ps1_no_get_filehash(self):
-        """Helper.ps1 不包含 Get-FileHash"""
-        SelfUpdater._generate_helper_ps1(Path(self.tmpdir))
-        content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
-        self.assertNotIn("Get-FileHash", content,
-                         "Helper.ps1 中不应包含 Get-FileHash 调用")
-
-    def test_helper_ps1_has_get_sha256_definition(self):
-        """Helper.ps1 包含 Get-SHA256 函数定义"""
-        SelfUpdater._generate_helper_ps1(Path(self.tmpdir))
-        content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
+    def _assert_sha256_fallbacks(self, content: str, script_name: str) -> None:
+        """断言 Get-SHA256 函数包含 .NET、Get-FileHash 与 certutil fallback"""
         self.assertIn("function Get-SHA256($filePath)", content,
-                      "Helper.ps1 中应包含 Get-SHA256 函数定义")
+                      f"{script_name} 中应包含 Get-SHA256 函数定义")
+        self.assertIn("[System.IO.File]::OpenRead($filePath)", content,
+                      f"{script_name} 中应先尝试 .NET 文件流")
+        self.assertIn("[System.Security.Cryptography.SHA256]::Create()", content,
+                      f"{script_name} 中应先尝试 .NET SHA256")
+        self.assertIn("if ($sha256) { $sha256.Dispose() }", content,
+                      f"{script_name} 中应释放 SHA256 对象")
+        self.assertIn("if ($stream) { $stream.Dispose() }", content,
+                      f"{script_name} 中应释放文件流")
+        self.assertIn("Get-Command Get-FileHash -ErrorAction SilentlyContinue", content,
+                      f"{script_name} 中应包含 Get-FileHash fallback")
+        self.assertIn("Get-FileHash -Algorithm SHA256 -LiteralPath $filePath", content,
+                      f"{script_name} 中应使用 LiteralPath 计算 Get-FileHash")
+        self.assertIn("certutil.exe -hashfile", content,
+                      f"{script_name} 中应包含 certutil fallback")
+        self.assertIn("^[0-9A-Fa-f]{64}$", content,
+                      f"{script_name} 中应解析 certutil 64 位 hex 输出")
+        self.assertIn("throw \"Get-SHA256 failed:", content,
+                      f"{script_name} 中应在全部失败时抛出明确错误")
+
+    def test_helper_ps1_has_sha256_fallbacks(self):
+        """Helper.ps1 包含多路径 SHA256 计算 fallback"""
+        SelfUpdater._generate_helper_ps1(Path(self.tmpdir))
+        content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
+        self._assert_sha256_fallbacks(content, "Helper.ps1")
 
     def test_helper_ps1_has_get_sha256_call(self):
         """Helper.ps1 包含 Get-SHA256 $target 调用"""
@@ -739,19 +754,11 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
         self.assertIn("Get-SHA256 $target", content,
                       "Helper.ps1 中应包含 Get-SHA256 $target 调用")
 
-    def test_update_ps1_no_get_filehash(self):
-        """Update.ps1 不包含 Get-FileHash"""
+    def test_update_ps1_has_sha256_fallbacks(self):
+        """Update.ps1 包含多路径 SHA256 计算 fallback"""
         SelfUpdater._generate_update_ps1(Path(self.tmpdir))
         content = self._read_generated("M9A_Update_Assistant_Update.ps1")
-        self.assertNotIn("Get-FileHash", content,
-                         "Update.ps1 中不应包含 Get-FileHash 调用")
-
-    def test_update_ps1_has_get_sha256_definition(self):
-        """Update.ps1 包含 Get-SHA256 函数定义"""
-        SelfUpdater._generate_update_ps1(Path(self.tmpdir))
-        content = self._read_generated("M9A_Update_Assistant_Update.ps1")
-        self.assertIn("function Get-SHA256($filePath)", content,
-                      "Update.ps1 中应包含 Get-SHA256 函数定义")
+        self._assert_sha256_fallbacks(content, "Update.ps1")
 
     def test_update_ps1_has_get_sha256_call(self):
         """Update.ps1 包含 Get-SHA256 $newFile 调用"""
