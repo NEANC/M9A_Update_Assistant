@@ -236,7 +236,7 @@ class TestCheckSelfUpdate(unittest.TestCase):
     @mock.patch('modules.self_updater.requests.get')
     @mock.patch('modules.self_updater.SelfUpdater.detect_package_type')
     def test_force_skips_build_tag_check(self, mock_detect, mock_get):
-        """force=True 跳过 Build 版本检查，直接进入版本比对"""
+        """force=True 跳过 Build 版本检查并继续强制更新流程"""
         mock_detect.return_value = (True, 'Nuitka')
         mock_response = mock.MagicMock()
         # preview 通道用 /releases API，返回数组
@@ -260,18 +260,19 @@ class TestCheckSelfUpdate(unittest.TestCase):
         dm = DownloadManager('', self.tmpdir, self.logger)
         zm = ZipManager(self.logger)
 
-        with mock.patch.object(self.su, '_is_build_tag', wraps=self.su._is_build_tag) as mock_is_build:
-            with mock.patch.object(self.su, '_version_newer_than', return_value=True):
-                with mock.patch.object(self.su, '_fetch_current_release_sha256', return_value=''):
-                    with mock.patch.object(dm, 'download_file_with_progress', return_value=True):
-                        with mock.patch.object(zm, 'verify_file_sha256', return_value=True):
-                            with mock.patch.object(self.su, '_replace_executable'):
-                                result = self.su.check_self_update(
-                                    'v0.0.1-build.gb6da5ee', gh, dm, zm, force=True,
-                                )
-                                self.assertTrue(result)
-                                # force=True bypasses _is_build_tag check entirely
-                                mock_is_build.assert_not_called()
+        with mock.patch.object(self.su, '_check_system_environment', return_value=True):
+            with mock.patch.object(self.su, '_is_build_tag', wraps=self.su._is_build_tag) as mock_is_build:
+                with mock.patch.object(self.su, '_version_newer_than', return_value=True):
+                    with mock.patch.object(self.su, '_fetch_current_release_sha256', return_value=''):
+                        with mock.patch.object(dm, 'download_file_with_progress', return_value=True):
+                            with mock.patch.object(zm, 'verify_file_sha256', return_value=True):
+                                with mock.patch.object(self.su, '_replace_executable'):
+                                    result = self.su.check_self_update(
+                                        'v0.0.1-build.gb6da5ee', gh, dm, zm, force=True,
+                                    )
+                                    self.assertTrue(result)
+                                    # force=True bypasses _is_build_tag check entirely
+                                    mock_is_build.assert_not_called()
 
     @mock.patch('modules.self_updater.requests.get')
     @mock.patch('modules.self_updater.SelfUpdater.detect_package_type')
@@ -299,17 +300,18 @@ class TestCheckSelfUpdate(unittest.TestCase):
         dm = DownloadManager('', self.tmpdir, self.logger)
         zm = ZipManager(self.logger)
 
-        with mock.patch.object(self.su, '_version_newer_than', wraps=self.su._version_newer_than) as mock_vnt:
-            with mock.patch.object(self.su, '_fetch_current_release_sha256', return_value=''):
-                with mock.patch.object(dm, 'download_file_with_progress', return_value=True):
-                    with mock.patch.object(zm, 'verify_file_sha256', return_value=True):
-                        with mock.patch.object(self.su, '_replace_executable'):
-                            result = self.su.check_self_update(
-                                'v1.0.0', gh, dm, zm, force=True,
-                            )
-                            self.assertTrue(result)
-                            # force=True bypasses _version_newer_than
-                            mock_vnt.assert_not_called()
+        with mock.patch.object(self.su, '_check_system_environment', return_value=True):
+            with mock.patch.object(self.su, '_version_newer_than', wraps=self.su._version_newer_than) as mock_vnt:
+                with mock.patch.object(self.su, '_fetch_current_release_sha256', return_value=''):
+                    with mock.patch.object(dm, 'download_file_with_progress', return_value=True):
+                        with mock.patch.object(zm, 'verify_file_sha256', return_value=True):
+                            with mock.patch.object(self.su, '_replace_executable'):
+                                result = self.su.check_self_update(
+                                    'v1.0.0', gh, dm, zm, force=True,
+                                )
+                                self.assertTrue(result)
+                                # force=True bypasses _version_newer_than
+                                mock_vnt.assert_not_called()
 
     def test_force_without_special_args_defaults_false(self):
         """不传 force 参数时默认为 False"""
