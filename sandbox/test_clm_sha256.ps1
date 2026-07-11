@@ -181,6 +181,11 @@ try {
         exit 2
     }
 
+    if (`$method -ne "certutil") {
+        Write-Host ("ConstrainedLanguage: FAIL - expected certutil fallback but got {0}" -f `$method)
+        exit 1
+    }
+
     Write-Host ("ConstrainedLanguage: PASS - fallback method={0}" -f `$method)
     exit 0
 } catch {
