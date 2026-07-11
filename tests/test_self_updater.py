@@ -700,6 +700,67 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         self.assertIsNone(UpdateState.load())
 
 
+class TestGeneratedPs1Scripts(unittest.TestCase):
+    """验证生成的 PS1 脚本内容 — 确认 Get-FileHash 已消除且 Get-SHA256 存在"""
+
+    def setUp(self):
+        _suppress_logs()
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _read_generated(self, filename: str) -> str:
+        """读取生成的 PS1 文件内容"""
+        path = os.path.join(self.tmpdir, filename)
+        if not os.path.exists(path):
+            return ""
+        with open(path, 'r', encoding='utf-8-sig') as f:
+            return f.read()
+
+    def test_helper_ps1_no_get_filehash(self):
+        """Helper.ps1 不包含 Get-FileHash"""
+        SelfUpdater._generate_helper_ps1(Path(self.tmpdir))
+        content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
+        self.assertNotIn("Get-FileHash", content,
+                         "Helper.ps1 中不应包含 Get-FileHash 调用")
+
+    def test_helper_ps1_has_get_sha256_definition(self):
+        """Helper.ps1 包含 Get-SHA256 函数定义"""
+        SelfUpdater._generate_helper_ps1(Path(self.tmpdir))
+        content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
+        self.assertIn("function Get-SHA256($filePath)", content,
+                      "Helper.ps1 中应包含 Get-SHA256 函数定义")
+
+    def test_helper_ps1_has_get_sha256_call(self):
+        """Helper.ps1 包含 Get-SHA256 $target 调用"""
+        SelfUpdater._generate_helper_ps1(Path(self.tmpdir))
+        content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
+        self.assertIn("Get-SHA256 $target", content,
+                      "Helper.ps1 中应包含 Get-SHA256 $target 调用")
+
+    def test_update_ps1_no_get_filehash(self):
+        """Update.ps1 不包含 Get-FileHash"""
+        SelfUpdater._generate_update_ps1(Path(self.tmpdir))
+        content = self._read_generated("M9A_Update_Assistant_Update.ps1")
+        self.assertNotIn("Get-FileHash", content,
+                         "Update.ps1 中不应包含 Get-FileHash 调用")
+
+    def test_update_ps1_has_get_sha256_definition(self):
+        """Update.ps1 包含 Get-SHA256 函数定义"""
+        SelfUpdater._generate_update_ps1(Path(self.tmpdir))
+        content = self._read_generated("M9A_Update_Assistant_Update.ps1")
+        self.assertIn("function Get-SHA256($filePath)", content,
+                      "Update.ps1 中应包含 Get-SHA256 函数定义")
+
+    def test_update_ps1_has_get_sha256_call(self):
+        """Update.ps1 包含 Get-SHA256 $newFile 调用"""
+        SelfUpdater._generate_update_ps1(Path(self.tmpdir))
+        content = self._read_generated("M9A_Update_Assistant_Update.ps1")
+        self.assertIn("Get-SHA256 $newFile", content,
+                      "Update.ps1 中应包含 Get-SHA256 $newFile 调用")
+
+
 def _suppress_logs():
     """抑制日志输出"""
     logging.getLogger("M9AUpdateAssistant").setLevel(logging.CRITICAL)

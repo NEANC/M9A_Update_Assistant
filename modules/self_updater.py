@@ -575,6 +575,20 @@ class SelfUpdater:
                 }
             }
 
+            function Get-SHA256($filePath) {
+                $stream = $null
+                $sha256 = $null
+                try {
+                    $stream = [System.IO.File]::OpenRead($filePath)
+                    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                    $hash = $sha256.ComputeHash($stream)
+                    return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+                } finally {
+                    if ($sha256) { $sha256.Dispose() }
+                    if ($stream) { $stream.Dispose() }
+                }
+            }
+
             function Set-UpdateStatus($state, $step, $message, $progress, $level) {
                 $message = Normalize-IniValue $message
                 if ($state) { Write-IniValue "State" "state" $state }
@@ -782,7 +796,7 @@ class SelfUpdater:
                 $newSha256 = Read-IniValue "Version" "new_sha256"
                 Assert-NotEmpty "Files.target" $target
                 if ($newSha256) {
-                    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash.ToLowerInvariant()
+                    $actual = Get-SHA256 $target
                     if ($actual -ne $newSha256.ToLowerInvariant()) {
                         Restore-Backup "target hash mismatch after replace"
                     }
@@ -932,6 +946,20 @@ class SelfUpdater:
                 } catch {}
             }
 
+            function Get-SHA256($filePath) {
+                $stream = $null
+                $sha256 = $null
+                try {
+                    $stream = [System.IO.File]::OpenRead($filePath)
+                    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                    $hash = $sha256.ComputeHash($stream)
+                    return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+                } finally {
+                    if ($sha256) { $sha256.Dispose() }
+                    if ($stream) { $stream.Dispose() }
+                }
+            }
+
             function Move-WithRetry($src, $dst, $timeoutSec) {
                 $deadline = (Get-Date).AddSeconds($timeoutSec)
                 $lastError = $null
@@ -969,7 +997,7 @@ class SelfUpdater:
 
                 if ($newSha256) {
                     Set-UpdateStatus "replacing" "verify_new_file_hash" "校验新版本文件 SHA256" 45 "INFO"
-                    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $newFile).Hash.ToLowerInvariant()
+                    $actual = Get-SHA256 $newFile
                     if ($actual -ne $newSha256.ToLowerInvariant()) {
                         throw "new file SHA256 mismatch: expected $newSha256, got $actual"
                     }
