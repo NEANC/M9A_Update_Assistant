@@ -39,10 +39,26 @@ tmpdir = Path(tempfile.mkdtemp())
 print(f"[SANDBOX] Test dir: {tmpdir}")
 
 # 1. Generate scripts
-SelfUpdater._generate_helper_ps1(tmpdir)
-SelfUpdater._generate_update_ps1(tmpdir)
 helper_path = tmpdir / 'M9A_Update_Assistant_Update_Helper.ps1'
 update_path = tmpdir / 'M9A_Update_Assistant_Update.ps1'
+ini = tmpdir / 'update_state.ini'
+log_file = tmpdir / 'update.log'
+lock_file = tmpdir / 'update_started.lock'
+target_exe = tmpdir / 'MyApp.exe'
+new_exe = tmpdir / 'MyApp.new.exe'
+backup_exe = tmpdir / 'MyApp.backup.exe'
+paths = {
+    'runtime_dir': tmpdir,
+    'state_file': ini,
+    'log_file': log_file,
+    'helper_ps1': helper_path,
+    'update_ps1': update_path,
+    'lock_file': lock_file,
+    'new_file': new_exe,
+    'backup_file': backup_exe,
+}
+SelfUpdater._generate_helper_ps1(paths)
+SelfUpdater._generate_update_ps1(paths)
 print(f"[SANDBOX] Generated: helper={helper_path.stat().st_size}B, update={update_path.stat().st_size}B")
 
 # 2. Verify script encoding (should be utf-8-sig = BOM)
@@ -54,9 +70,6 @@ for name, path in [('helper', helper_path), ('update', update_path)]:
     assert has_bom, f"{name}.ps1 missing BOM!"
 
 # 3. Create test files with backslash paths (real Windows)
-target_exe = tmpdir / 'MyApp.exe'
-new_exe = tmpdir / 'MyApp.new.exe'
-backup_exe = tmpdir / 'MyApp.backup.exe'
 target_exe.write_text('old_content')
 new_exe.write_text('new_content')
 
@@ -65,7 +78,6 @@ print(f"[SANDBOX] Test exe: target={target_exe.exists()}, new={new_exe.exists()}
 print(f"[SANDBOX] Skipping SHA256 validation (sandbox limitation)")
 
 # 4. Create update_state.ini with backslash Windows paths
-ini = tmpdir / 'update_state.ini'
 ini_content = f"""[State]
 state = idle
 last_error =
@@ -91,8 +103,6 @@ print(f"[SANDBOX] INI created: {ini.stat().st_size}B")
 # ─── TEST 1: Run update.ps1 standalone ───
 print("\n" + "="*60)
 print("[TEST 1] Running update.ps1 standalone...")
-lock_file = tmpdir / 'update_started.lock'
-log_file = tmpdir / 'update.log'
 if lock_file.exists(): lock_file.unlink()
 if log_file.exists(): log_file.unlink()
 
