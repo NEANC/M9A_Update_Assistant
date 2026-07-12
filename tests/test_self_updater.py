@@ -936,6 +936,42 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         self.assertFalse(update_log.exists())
         self.assertTrue(foreign_file.exists())
 
+    def test_cleanup_update_residue_removes_legacy_program_dir_residue(self):
+        """旧版 verified 状态 → 清理程序目录固定名称残留。"""
+        program_dir = Path(self.tmpdir) / "program"
+        program_dir.mkdir()
+        target = program_dir / "M9A_Update_Assistant.exe"
+        new_file = program_dir / "M9A_Update_Assistant.new.exe"
+        backup_file = program_dir / "M9A_Update_Assistant.backup.exe"
+        legacy_residue = [
+            program_dir / "M9A_Update_Assistant_Update_Helper.ps1",
+            program_dir / "M9A_Update_Assistant_Update.ps1",
+            program_dir / "update_started.lock",
+            program_dir / "M9A_Update_Assistant.old.exe",
+            new_file,
+            backup_file,
+        ]
+        sys.argv[0] = str(target)
+
+        target.write_text("target", encoding='utf-8')
+        for path in legacy_residue:
+            path.write_text(path.name, encoding='utf-8')
+
+        state = UpdateState()
+        state["state"] = "verified"
+        state["target"] = str(target)
+        state["new_file"] = str(new_file)
+        state["backup_file"] = str(backup_file)
+        state.save()
+
+        state_file = program_dir / UpdateState.STATE_FILE_NAME
+        SelfUpdater._cleanup_update_residue(self.logger)
+
+        self.assertTrue(target.exists())
+        for path in legacy_residue:
+            self.assertFalse(path.exists(), f"旧版残留未删除: {path}")
+        self.assertFalse(state_file.exists())
+
     def test_cleanup_update_residue_skips_recorded_files_outside_runtime_dir(self):
         """verified 清理应跳过 runtime_dir 外的状态记录残留文件。"""
         program_dir = Path(self.tmpdir) / "program"

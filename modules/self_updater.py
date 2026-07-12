@@ -121,6 +121,16 @@ class SelfUpdater:
         runtime_path = Path(runtime_dir) if runtime_dir else None
 
         cleanup_files = []
+        seen_cleanup_files = set()
+
+        def add_cleanup_file(file_path: Path) -> None:
+            """添加去重后的待清理文件。"""
+            resolved_path = file_path.resolve()
+            if resolved_path in seen_cleanup_files:
+                return
+            seen_cleanup_files.add(resolved_path)
+            cleanup_files.append(file_path)
+
         runtime_file_keys = ("helper_ps1", "update_ps1", "lock_file", "new_file", "backup_file")
         for key in runtime_file_keys:
             file_path = state.get("Files", key, fallback="")
@@ -130,18 +140,31 @@ class SelfUpdater:
             if runtime_path and not SelfUpdater._is_within_directory(path, runtime_path):
                 logger.warning(f"跳过越界残留文件: {path}")
                 continue
-            cleanup_files.append(path)
+            add_cleanup_file(path)
+
+        if target_path:
+            legacy_program_dir = target_path.parent
+            legacy_file_names = (
+                "M9A_Update_Assistant_Update_Helper.ps1",
+                "M9A_Update_Assistant_Update.ps1",
+                "update_started.lock",
+                f"{target_path.stem}.old.exe",
+                f"{target_path.stem}.new.exe",
+                f"{target_path.stem}.backup.exe",
+            )
+            for file_name in legacy_file_names:
+                add_cleanup_file(legacy_program_dir / file_name)
 
         log_file = state.get("Files", "log_file", fallback="")
         allowed_log_file = target_path.parent / "update.log" if target_path else None
         if log_file and allowed_log_file:
             recorded_log_file = Path(log_file)
             if recorded_log_file.resolve() == allowed_log_file.resolve():
-                cleanup_files.append(recorded_log_file)
+                add_cleanup_file(recorded_log_file)
             else:
                 logger.warning(f"跳过越界日志文件: {recorded_log_file}")
         elif allowed_log_file:
-            cleanup_files.append(allowed_log_file)
+            add_cleanup_file(allowed_log_file)
 
         for file_path in cleanup_files:
             try:
