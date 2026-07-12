@@ -869,6 +869,18 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
+    def _script_paths(self) -> dict[str, Path]:
+        """构造生成 PS1 脚本所需的绝对路径字典。"""
+        runtime_dir = Path(self.tmpdir).resolve()
+        return {
+            'runtime_dir': runtime_dir,
+            'state_file': runtime_dir / UpdateState.STATE_FILE_NAME,
+            'log_file': runtime_dir / 'update.log',
+            'helper_ps1': runtime_dir / 'M9A_Update_Assistant_Update_Helper.ps1',
+            'update_ps1': runtime_dir / 'M9A_Update_Assistant_Update.ps1',
+            'lock_file': runtime_dir / 'update_started.lock',
+        }
+
     def _read_generated(self, filename: str) -> str:
         """读取生成的 PS1 文件内容，缺失时立即失败。"""
         path = os.path.join(self.tmpdir, filename)
@@ -985,8 +997,9 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
 
     def test_helper_unique_functions_only_exist_in_helper_ps1(self):
         """Helper 独有函数只写入 Helper.ps1，不写入 Update.ps1。"""
-        SelfUpdater._generate_helper_ps1(Path(self.tmpdir))
-        SelfUpdater._generate_update_ps1(Path(self.tmpdir))
+        paths = self._script_paths()
+        SelfUpdater._generate_helper_ps1(paths)
+        SelfUpdater._generate_update_ps1(paths)
 
         helper_content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
         update_content = self._read_generated("M9A_Update_Assistant_Update.ps1")
@@ -1014,7 +1027,7 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
         ]
         for generator, filename in scripts:
             with self.subTest(script=filename):
-                generator(Path(self.tmpdir))
+                generator(self._script_paths())
                 content = self._read_generated(filename)
                 self.assertEqual(content.count("function Get-SHA256"), 1)
                 self.assertEqual(content.count("function Move-WithRetry"), 1)
@@ -1022,29 +1035,119 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
 
     def test_helper_ps1_has_sha256_fallbacks(self):
         """Helper.ps1 包含多路径 SHA256 计算 fallback"""
-        SelfUpdater._generate_helper_ps1(Path(self.tmpdir))
+        SelfUpdater._generate_helper_ps1(self._script_paths())
         content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
         self._assert_sha256_fallbacks(content, "Helper.ps1")
 
     def test_helper_ps1_has_get_sha256_call(self):
         """Helper.ps1 包含 Get-SHA256 $target 调用"""
-        SelfUpdater._generate_helper_ps1(Path(self.tmpdir))
+        SelfUpdater._generate_helper_ps1(self._script_paths())
         content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
         self.assertIn("Get-SHA256 $target", content,
                       "Helper.ps1 中应包含 Get-SHA256 $target 调用")
 
     def test_update_ps1_has_sha256_fallbacks(self):
         """Update.ps1 包含多路径 SHA256 计算 fallback"""
-        SelfUpdater._generate_update_ps1(Path(self.tmpdir))
+        SelfUpdater._generate_update_ps1(self._script_paths())
         content = self._read_generated("M9A_Update_Assistant_Update.ps1")
         self._assert_sha256_fallbacks(content, "Update.ps1")
 
     def test_update_ps1_has_get_sha256_call(self):
         """Update.ps1 包含 Get-SHA256 $newFile 调用"""
-        SelfUpdater._generate_update_ps1(Path(self.tmpdir))
+        SelfUpdater._generate_update_ps1(self._script_paths())
         content = self._read_generated("M9A_Update_Assistant_Update.ps1")
         self.assertIn("Get-SHA256 $newFile", content,
                       "Update.ps1 中应包含 Get-SHA256 $newFile 调用")
+
+    def test_generated_scripts_use_injected_absolute_paths(self):
+        """生成脚本应使用注入的绝对路径，不再从脚本目录派生状态文件。"""
+        paths = self._script_paths()
+
+        SelfUpdater._generate_helper_ps1(paths)
+        SelfUpdater._generate_update_ps1(paths)
+
+        helper_content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
+        update_content = self._read_generated("M9A_Update_Assistant_Update.ps1")
+        expected_assignments = {
+            'runtimeDir': paths['runtime_dir'],
+            'stateFile': paths['state_file'],
+            'logFile': paths['log_file'],
+        }
+        helper_expected = {
+            **expected_assignments,
+            'lockFile': paths['lock_file'],
+            'updatePs1': paths['update_ps1'],
+        }
+
+        for variable_name, path in helper_expected.items():
+            expected = f'${variable_name} = "{SelfUpdater._ps_quote(path)}"'
+            self.assertIn(expected, helper_content)
+        for variable_name, path in expected_assignments.items():
+            expected = f'${variable_name} = "{SelfUpdater._ps_quote(path)}"'
+            self.assertIn(expected, update_content)
+
+        forbidden_patterns = (
+            'Join-Path $scriptDir "update_state.ini"',
+            'Join-Path $scriptDir "update.log"',
+            'Join-Path $scriptDir "update_started.lock"',
+            'Join-Path $scriptDir "M9A_Update_Assistant_Update.ps1"',
+        )
+        for pattern in forbidden_patterns:
+            self.assertNotIn(pattern, helper_content)
+            self.assertNotIn(pattern, update_content)
+
+    def test_replace_executable_writes_runtime_paths_to_state(self):
+        """替换流程应把 runtime 相关绝对路径写入 UpdateState。"""
+        program_dir = Path(self.tmpdir) / 'program'
+        program_dir.mkdir()
+        current_exe = program_dir / 'M9A_Update_Assistant.exe'
+        current_exe.write_text('old exe', encoding='utf-8')
+        tmp_new = Path(self.tmpdir) / 'downloaded.exe'
+        tmp_new.write_text('new exe', encoding='utf-8')
+        sha_path = Path(self.tmpdir) / 'downloaded.sha256'
+        sha_path.write_text('sha', encoding='ascii')
+        updater = SelfUpdater('', str(Path(self.tmpdir) / 'runtime'), logging.getLogger("TestReplaceExecutable"))
+        original_argv0 = sys.argv[0]
+        sys.argv[0] = str(current_exe)
+
+        class ReadyProcess:
+            """模拟已启动的 helper 进程。"""
+
+            returncode = None
+
+            def poll(self):
+                """返回 None 表示进程仍在运行。"""
+                return None
+
+            def kill(self):
+                """模拟终止进程。"""
+                return None
+
+        def fake_popen(args, creationflags):
+            """模拟 PowerShell 启动并创建握手锁文件。"""
+            Path(args[5]).parent.joinpath('update_started.lock').write_text('', encoding='utf-8')
+            return ReadyProcess()
+
+        try:
+            with mock.patch.object(SelfUpdater, '_get_exe_path', return_value=current_exe):
+                with mock.patch('modules.self_updater.os.getpid', return_value=12345):
+                    with mock.patch('modules.self_updater.subprocess.Popen', side_effect=fake_popen):
+                        updater._replace_executable(tmp_new, sha_path, 'v2.0.0', 'oldhash', 'newhash')
+
+            state = UpdateState.load()
+            self.assertIsNotNone(state)
+            paths = updater._build_update_runtime_paths(current_exe, 'v2.0.0')
+            self.assertEqual(state.get('Files', 'runtime_dir'), str(paths['runtime_dir']))
+            self.assertEqual(state.get('Files', 'helper_ps1'), str(paths['helper_ps1']))
+            self.assertEqual(state.get('Files', 'update_ps1'), str(paths['update_ps1']))
+            self.assertEqual(state.get('Files', 'lock_file'), str(paths['lock_file']))
+            self.assertEqual(state['new_file'], str(paths['new_file']))
+            self.assertEqual(state['backup_file'], str(paths['backup_file']))
+            for key in ('runtime_dir', 'helper_ps1', 'update_ps1', 'lock_file', 'new_file', 'backup_file'):
+                self.assertTrue(Path(state.get('Files', key) if key.endswith(('_dir', '_ps1')) or key == 'lock_file' else state[key]).is_absolute())
+        finally:
+            sys.argv[0] = original_argv0
+            _cleanup_state_file()
 
     def test_generated_get_sha256_matches_python_hashlib(self):
         """两个生成脚本的 Get-SHA256 均可处理含空格路径。"""
@@ -1077,7 +1180,7 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
         ]
         for script_label, generator, filename in scripts:
             with self.subTest(script=script_label):
-                generator(Path(self.tmpdir))
+                generator(self._script_paths())
                 content = self._read_generated(filename)
                 function_match = re.search(
                     r"(?ms)^function Get-SHA256\(\$filePath\) \{.*?^\}",

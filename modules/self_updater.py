@@ -542,13 +542,23 @@ class SelfUpdater:
         }
 
     @staticmethod
-    def _generate_helper_ps1(script_dir: Path) -> None:
+    def _ps_quote(path: Path) -> str:
+        """转义 PowerShell 双引号字符串中的路径内容。"""
+        return str(path).replace('`', '``').replace('"', '`"')
+
+    @staticmethod
+    def _generate_helper_ps1(paths: dict[str, Path]) -> None:
         """
         生成 M9A_Update_Assistant_Update_Helper.ps1
 
         Args:
-            script_dir: 脚本输出目录（与 exe 同目录）
+            paths: 自更新运行时绝对路径字典
         """
+        runtime_dir = SelfUpdater._ps_quote(paths['runtime_dir'])
+        state_file = SelfUpdater._ps_quote(paths['state_file'])
+        log_file = SelfUpdater._ps_quote(paths['log_file'])
+        lock_file = SelfUpdater._ps_quote(paths['lock_file'])
+        update_ps1 = SelfUpdater._ps_quote(paths['update_ps1'])
         ps1_content = textwrap.dedent(r"""
             <#
             .SYNOPSIS
@@ -561,13 +571,13 @@ class SelfUpdater:
             $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
             $scriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
             $scriptTag  = ($scriptName -split '_')[-1]
-            $lockFile   = Join-Path $scriptDir "update_started.lock"
+            $runtimeDir = "__RUNTIME_DIR__"
+            $stateFile = "__STATE_FILE__"
+            $logFile = "__LOG_FILE__"
+            $lockFile = "__LOCK_FILE__"
+            $updatePs1 = "__UPDATE_PS1__"
 
             try { New-Item -Path $lockFile -ItemType File -Force | Out-Null } catch {}
-
-            $stateFile = Join-Path $scriptDir "update_state.ini"
-            $logFile   = Join-Path $scriptDir "update.log"
-            $updatePs1 = Join-Path $scriptDir "M9A_Update_Assistant_Update.ps1"
 
             __COMMON_BASE_FUNCTIONS__
 
@@ -599,6 +609,11 @@ class SelfUpdater:
         helper_launch_functions = generate_helper_launch_functions_ps1().rstrip()
         helper_rollback_functions = generate_helper_rollback_functions_ps1().rstrip()
         helper_orchestration_functions = generate_helper_orchestration_functions_ps1().rstrip()
+        ps1_content = ps1_content.replace("__RUNTIME_DIR__", runtime_dir)
+        ps1_content = ps1_content.replace("__STATE_FILE__", state_file)
+        ps1_content = ps1_content.replace("__LOG_FILE__", log_file)
+        ps1_content = ps1_content.replace("__LOCK_FILE__", lock_file)
+        ps1_content = ps1_content.replace("__UPDATE_PS1__", update_ps1)
         ps1_content = ps1_content.replace("__COMMON_BASE_FUNCTIONS__", common_base_functions)
         ps1_content = ps1_content.replace("__SHA256_FUNCTION__", sha256_function)
         ps1_content = ps1_content.replace("__COMMON_STATE_FUNCTIONS__", common_state_functions)
@@ -609,17 +624,20 @@ class SelfUpdater:
         ps1_content = ps1_content.replace("__HELPER_ROLLBACK_FUNCTIONS__", helper_rollback_functions)
         ps1_content = ps1_content.replace("__HELPER_ORCHESTRATION_FUNCTIONS__", helper_orchestration_functions)
 
-        script_path = script_dir / "M9A_Update_Assistant_Update_Helper.ps1"
+        script_path = paths['helper_ps1']
         script_path.write_text(ps1_content, encoding='utf-8-sig')
 
     @staticmethod
-    def _generate_update_ps1(script_dir: Path) -> None:
+    def _generate_update_ps1(paths: dict[str, Path]) -> None:
         """
         生成 M9A_Update_Assistant_Update.ps1
 
         Args:
-            script_dir: 脚本输出目录（与 exe 同目录）
+            paths: 自更新运行时绝对路径字典
         """
+        runtime_dir = SelfUpdater._ps_quote(paths['runtime_dir'])
+        state_file = SelfUpdater._ps_quote(paths['state_file'])
+        log_file = SelfUpdater._ps_quote(paths['log_file'])
         ps1_content = textwrap.dedent(r"""
             <#
             .SYNOPSIS
@@ -631,8 +649,9 @@ class SelfUpdater:
             $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
             $scriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
             $scriptTag  = ($scriptName -split '_')[-1]
-            $stateFile  = Join-Path $scriptDir "update_state.ini"
-            $logFile    = Join-Path $scriptDir "update.log"
+            $runtimeDir = "__RUNTIME_DIR__"
+            $stateFile = "__STATE_FILE__"
+            $logFile = "__LOG_FILE__"
 
             __COMMON_BASE_FUNCTIONS__
 
@@ -696,12 +715,15 @@ class SelfUpdater:
         sha256_function = generate_sha256_function_ps1().rstrip()
         common_state_functions = generate_common_state_functions_ps1().rstrip()
         move_with_retry_function = generate_move_with_retry_ps1().rstrip()
+        ps1_content = ps1_content.replace("__RUNTIME_DIR__", runtime_dir)
+        ps1_content = ps1_content.replace("__STATE_FILE__", state_file)
+        ps1_content = ps1_content.replace("__LOG_FILE__", log_file)
         ps1_content = ps1_content.replace("__COMMON_BASE_FUNCTIONS__", common_base_functions)
         ps1_content = ps1_content.replace("__SHA256_FUNCTION__", sha256_function)
         ps1_content = ps1_content.replace("__COMMON_STATE_FUNCTIONS__", common_state_functions)
         ps1_content = ps1_content.replace("__MOVE_WITH_RETRY_FUNCTION__", move_with_retry_function)
 
-        script_path = script_dir / "M9A_Update_Assistant_Update.ps1"
+        script_path = paths['update_ps1']
         script_path.write_text(ps1_content, encoding='utf-8-sig')
 
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
@@ -718,9 +740,10 @@ class SelfUpdater:
             new_sha256: 新版本 SHA256
         """
         current_exe = self._get_exe_path()
-        base_dir = current_exe.parent
-        new_exe = base_dir / f"{current_exe.stem}.new.exe"
-        backup_exe = base_dir / f"{current_exe.stem}.backup.exe"
+        paths = self._build_update_runtime_paths(current_exe, new_version)
+        paths['runtime_dir'].mkdir(parents=True, exist_ok=True)
+        new_exe = paths['new_file']
+        backup_exe = paths['backup_file']
 
         shutil.copy2(tmp_path, new_exe)
         self.logger.info(f"新版本已暂存: {new_exe}")
@@ -735,6 +758,10 @@ class SelfUpdater:
         state["target"] = str(current_exe)
         state["new_file"] = str(new_exe)
         state["backup_file"] = str(backup_exe)
+        state.set("Files", "runtime_dir", str(paths['runtime_dir']))
+        state.set("Files", "helper_ps1", str(paths['helper_ps1']))
+        state.set("Files", "update_ps1", str(paths['update_ps1']))
+        state.set("Files", "lock_file", str(paths['lock_file']))
         state["old_version"] = old_version
         state["new_version"] = new_version
         state["old_sha256"] = old_sha256
@@ -743,21 +770,22 @@ class SelfUpdater:
         state.set("Retry", "max_retry", "3")
         state.save()
 
-        self._generate_helper_ps1(base_dir)
-        self._generate_update_ps1(base_dir)
-        self.logger.info(f"已生成更新脚本到目录: {base_dir}")
+        self._generate_helper_ps1(paths)
+        self._generate_update_ps1(paths)
+        self.logger.info(f"已生成更新脚本到目录: {paths['runtime_dir']}")
 
         state.transition("helper_started")
 
         self.logger.info("启动更新进程...")
-        lock_file = base_dir / "update_started.lock"
+        lock_file = paths['lock_file']
+        helper_ps1 = paths['helper_ps1']
         if lock_file.exists():
             lock_file.unlink()
 
         proc = subprocess.Popen(
             [
                 "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                "-File", str(base_dir / "M9A_Update_Assistant_Update_Helper.ps1"),
+                "-File", str(helper_ps1),
                 "-ParentPid", str(os.getpid()),
             ],
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
