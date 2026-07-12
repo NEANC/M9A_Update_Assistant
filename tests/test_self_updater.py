@@ -745,6 +745,127 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
         self.assertIn("throw \"Get-SHA256 failed:", content,
                       f"{script_name} 中应在全部失败时抛出明确错误")
 
+    def test_sha256_fragment_module_generates_single_function(self):
+        """PS1 片段模块生成单个带多路径 fallback 的 Get-SHA256 函数。"""
+        from modules.ps1_fragments import generate_sha256_function_ps1
+
+        content = generate_sha256_function_ps1()
+
+        self._assert_sha256_fallbacks(content, "SHA256 片段")
+        self.assertEqual(content.count('function Get-SHA256'), 1)
+        self.assertIn('$errors = @()', content)
+        self.assertIn('$LASTEXITCODE = 0', content)
+
+    def test_ps1_fragment_module_generates_common_functions(self):
+        """PS1 片段模块生成公共基础、状态与移动函数。"""
+        from modules.ps1_fragments import (
+            generate_common_base_functions_ps1,
+            generate_common_state_functions_ps1,
+            generate_move_with_retry_ps1,
+        )
+
+        base_content = generate_common_base_functions_ps1()
+        state_content = generate_common_state_functions_ps1()
+        move_content = generate_move_with_retry_ps1()
+        combined_content = base_content + state_content + move_content
+
+        for function_name in (
+            "Normalize-IniValue",
+            "Assert-NotEmpty",
+            "Write-Log",
+        ):
+            self.assertIn(f"function {function_name}", base_content)
+
+        for function_name in (
+            "Read-IniValue",
+            "Write-IniValue",
+            "Set-UpdateStatus",
+        ):
+            self.assertIn(f"function {function_name}", state_content)
+
+        self.assertIn("function Move-WithRetry", move_content)
+        self.assertNotIn("Get-SHA256", combined_content)
+
+    def test_ps1_fragment_module_generates_helper_unique_functions(self):
+        """PS1 片段模块按职责生成 Helper 独有函数。"""
+        from modules.ps1_fragments import (
+            generate_helper_cleanup_functions_ps1,
+            generate_helper_launch_functions_ps1,
+            generate_helper_orchestration_functions_ps1,
+            generate_helper_process_functions_ps1,
+            generate_helper_rollback_functions_ps1,
+        )
+
+        process_content = generate_helper_process_functions_ps1()
+        cleanup_content = generate_helper_cleanup_functions_ps1()
+        rollback_content = generate_helper_rollback_functions_ps1()
+        launch_content = generate_helper_launch_functions_ps1()
+        orchestration_content = generate_helper_orchestration_functions_ps1()
+
+        expected_functions_by_fragment = {
+            process_content: (
+                "Quote-Arg",
+                "Start-ProcWait",
+                "Wait-ProcessExit",
+            ),
+            cleanup_content: (
+                "Remove-PathSafe",
+                "Cleanup-StagedFiles",
+                "Cleanup-OldInstallation",
+            ),
+            rollback_content: ("Restore-Backup",),
+            launch_content: ("Launch-NewVersion",),
+            orchestration_content: ("Run-UpdateAndVerify",),
+        }
+        forbidden_functions = (
+            "Get-SHA256",
+            "Move-WithRetry",
+            "Set-UpdateStatus",
+        )
+
+        for content, expected_functions in expected_functions_by_fragment.items():
+            for function_name in expected_functions:
+                self.assertIn(f"function {function_name}", content)
+            for function_name in forbidden_functions:
+                self.assertNotIn(f"function {function_name}", content)
+
+    def test_helper_unique_functions_only_exist_in_helper_ps1(self):
+        """Helper 独有函数只写入 Helper.ps1，不写入 Update.ps1。"""
+        SelfUpdater._generate_helper_ps1(Path(self.tmpdir))
+        SelfUpdater._generate_update_ps1(Path(self.tmpdir))
+
+        helper_content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
+        update_content = self._read_generated("M9A_Update_Assistant_Update.ps1")
+
+        for function_name in (
+            "Quote-Arg",
+            "Run-UpdateAndVerify",
+            "Restore-Backup",
+            "Launch-NewVersion",
+        ):
+            self.assertEqual(helper_content.count(f"function {function_name}"), 1)
+            self.assertNotIn(f"function {function_name}", update_content)
+
+    def test_helper_and_update_define_common_functions_once(self):
+        """Helper.ps1 与 Update.ps1 均只定义一次公共函数。"""
+        scripts = [
+            (
+                SelfUpdater._generate_helper_ps1,
+                "M9A_Update_Assistant_Update_Helper.ps1",
+            ),
+            (
+                SelfUpdater._generate_update_ps1,
+                "M9A_Update_Assistant_Update.ps1",
+            ),
+        ]
+        for generator, filename in scripts:
+            with self.subTest(script=filename):
+                generator(Path(self.tmpdir))
+                content = self._read_generated(filename)
+                self.assertEqual(content.count("function Get-SHA256"), 1)
+                self.assertEqual(content.count("function Move-WithRetry"), 1)
+                self.assertEqual(content.count("function Set-UpdateStatus"), 1)
+
     def test_helper_ps1_has_sha256_fallbacks(self):
         """Helper.ps1 包含多路径 SHA256 计算 fallback"""
         SelfUpdater._generate_helper_ps1(Path(self.tmpdir))

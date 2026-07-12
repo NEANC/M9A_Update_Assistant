@@ -17,6 +17,17 @@ from typing import Optional, Tuple
 from modules.config_self_updater import UpdateState
 from modules.download_manager import DownloadManager
 from modules.github_release_client import GitHubReleaseClient
+from modules.ps1_fragments import (
+    generate_common_base_functions_ps1,
+    generate_common_state_functions_ps1,
+    generate_helper_cleanup_functions_ps1,
+    generate_helper_launch_functions_ps1,
+    generate_helper_orchestration_functions_ps1,
+    generate_helper_process_functions_ps1,
+    generate_helper_rollback_functions_ps1,
+    generate_move_with_retry_ps1,
+    generate_sha256_function_ps1,
+)
 from modules.zip_manager import ZipManager
 
 
@@ -484,377 +495,45 @@ class SelfUpdater:
             $logFile   = Join-Path $scriptDir "update.log"
             $updatePs1 = Join-Path $scriptDir "M9A_Update_Assistant_Update.ps1"
 
-            function Normalize-IniValue($value) {
-                if ($null -eq $value) { return "" }
-                return ([string]$value) -replace "(`r`n|`n|`r)", " "
-            }
+            __COMMON_BASE_FUNCTIONS__
 
-            function Quote-Arg($arg) {
-                if ($null -eq $arg) { return '""' }
-                $s = [string]$arg
-                $s = $s -replace '\\(?=")', '\\'
-                $s = $s -replace '"', '\"'
-                if ($s -match '\s' -or $s -eq '') {
-                    return '"' + $s + '"'
-                }
-                return $s
-            }
+            __SHA256_FUNCTION__
 
-            function Assert-NotEmpty($name, $value) {
-                if ([string]::IsNullOrWhiteSpace($value)) {
-                    throw "missing required ini value: $name"
-                }
-            }
+            __COMMON_STATE_FUNCTIONS__
 
-            function Write-Log($level, $message) {
-                try {
-                    $line = "{0} -> {1} | {2} | {3}" -f $scriptTag, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $level, $message
-                    Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
-                } catch {}
-            }
+            __MOVE_WITH_RETRY_FUNCTION__
 
-            function Read-IniValue($section, $key) {
-                try {
-                    $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
-                    $sectionEsc = [regex]::Escape("[$section]")
-                    $keyEsc = [regex]::Escape($key)
-                    $sectionPattern = "(?ms)^$sectionEsc\s*\r?\n(.*?)(?=^\s*\[|\z)"
-                    if ($content -match $sectionPattern) {
-                        $keyPattern = "(?m)^$keyEsc\s*=\s*(.*?)[\r\t ]*$"
-                        if ($matches[1] -match $keyPattern) { return $matches[1] }
-                    }
-                } catch {}
-                return ""
-            }
+            __HELPER_PROCESS_FUNCTIONS__
 
-            function Write-IniValue($section, $key, $value) {
-                try {
-                    $value = Normalize-IniValue $value
-                    $lines = @(Get-Content -LiteralPath $stateFile -Encoding UTF8 -ErrorAction Stop)
+            __HELPER_CLEANUP_FUNCTIONS__
 
-                    $out = New-Object System.Collections.Generic.List[string]
-                    $inSection = $false
-                    $sectionFound = $false
-                    $keyWritten = $false
-                    $keyEsc = [regex]::Escape($key)
+            __HELPER_LAUNCH_FUNCTIONS__
 
-                    foreach ($line in $lines) {
-                        if ($line -match '^\s*\[(.+?)\]\s*$') {
-                            if ($inSection -and -not $keyWritten) {
-                                $out.Add("$key = $value")
-                                $keyWritten = $true
-                            }
-                            $inSection = ($matches[1] -eq $section)
-                            if ($inSection) { $sectionFound = $true }
-                            $out.Add($line)
-                            continue
-                        }
+            __HELPER_ROLLBACK_FUNCTIONS__
 
-                        if ($inSection -and -not $keyWritten -and $line -match "^\s*$keyEsc\s*=") {
-                            $out.Add("$key = $value")
-                            $keyWritten = $true
-                            continue
-                        }
+            __HELPER_ORCHESTRATION_FUNCTIONS__
 
-                        $out.Add($line)
-                    }
-
-                    if (-not $sectionFound) {
-                        if ($out.Count -gt 0 -and $out[-1].Trim() -ne '') { $out.Add("") }
-                        $out.Add("[$section]")
-                        $out.Add("$key = $value")
-                    } elseif ($inSection -and -not $keyWritten) {
-                        $out.Add("$key = $value")
-                    }
-
-                    $tmp = "$stateFile.tmp"
-                    [System.IO.File]::WriteAllLines($tmp, [string[]]$out.ToArray())
-                    Move-Item -LiteralPath $tmp -Destination $stateFile -Force
-                } catch {
-                    Write-Log "ERROR" "Write-IniValue failed: $($_.Exception.Message)"
-                }
-            }
-
-            function Get-SHA256($filePath) {
-                $lastError = $null
-
-                $stream = $null
-                $sha256 = $null
-                try {
-                    $stream = [System.IO.File]::OpenRead($filePath)
-                    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-                    $hash = $sha256.ComputeHash($stream)
-                    return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
-                } catch {
-                    $lastError = $_.Exception.Message
-                } finally {
-                    if ($sha256) { $sha256.Dispose() }
-                    if ($stream) { $stream.Dispose() }
-                }
-
-                try {
-                    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
-                        return (Get-FileHash -Algorithm SHA256 -LiteralPath $filePath -ErrorAction Stop).Hash.ToLowerInvariant()
-                    }
-                } catch {
-                    $lastError = $_.Exception.Message
-                }
-
-                try {
-                    $certOutput = & certutil.exe -hashfile $filePath SHA256 2>&1
-                    if ($LASTEXITCODE -ne 0) {
-                        throw ($certOutput -join "`n")
-                    }
-                    foreach ($line in $certOutput) {
-                        $hex = $line -replace '\s', ''
-                        if ($hex -match '^[0-9A-Fa-f]{64}$') {
-                            return $hex.ToLowerInvariant()
-                        }
-                    }
-                    throw "certutil output did not contain a SHA256 hash"
-                } catch {
-                    $lastError = $_.Exception.Message
-                }
-
-                throw "Get-SHA256 failed: $lastError"
-            }
-
-            function Set-UpdateStatus($state, $step, $message, $progress, $level) {
-                $message = Normalize-IniValue $message
-                if ($state) { Write-IniValue "State" "state" $state }
-                if ($step) { Write-IniValue "State" "step" $step }
-                if ($null -ne $progress) { Write-IniValue "State" "progress" "$progress" }
-                if ($level) { Write-IniValue "State" "level" $level }
-                Write-IniValue "State" "message" $message
-                Write-IniValue "State" "updated_at" (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')
-                if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
-                Write-Log $level $message
-                try {
-                    Write-Host ("[{0}] [{1}] {2} - {3}" -f (Get-Date -Format "HH:mm:ss"), $level, $step, $message)
-                } catch {}
-            }
-
-            function Get-RetryOrDefault($name, $default) {
-                $val = Read-IniValue "Retry" $name
-                if ($val -match '^\d+$') { return [int]$val }
-                return $default
-            }
-
-            function Remove-WithRetry($path, $timeoutSec) {
-                $deadline = (Get-Date).AddSeconds($timeoutSec)
-                $lastError = $null
-                while ((Get-Date) -lt $deadline) {
-                    try {
-                        if (Test-Path -LiteralPath $path) {
-                            Remove-Item -LiteralPath $path -Force -ErrorAction Stop
-                        }
-                        return
-                    } catch {
-                        $lastError = $_.Exception.Message
-                        Start-Sleep -Milliseconds 1000
-                    }
-                }
-                throw "Remove failed after retry: $path ; $lastError"
-            }
-
-            function Move-WithRetry($src, $dst, $timeoutSec) {
-                $deadline = (Get-Date).AddSeconds($timeoutSec)
-                $lastError = $null
-                while ((Get-Date) -lt $deadline) {
-                    try {
-                        Move-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
-                        return
-                    } catch {
-                        $lastError = $_.Exception.Message
-                        Start-Sleep -Milliseconds 1000
-                    }
-                }
-                throw "Move failed after retry: $src -> $dst ; $lastError"
-            }
-
-            function Commit-Update {
-                try {
-                    $backup = Read-IniValue "Files" "backup_file"
-                    Write-IniValue "Retry" "retry_count" "0"
-                    Write-IniValue "State" "last_error" ""
-                    Write-IniValue "State" "state" "verified"
-                    if ($backup -and (Test-Path -LiteralPath $backup)) {
-                        Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
-                    }
-                    if (Test-Path -LiteralPath $lockFile) {
-                        Remove-Item -LiteralPath $lockFile -Force -ErrorAction SilentlyContinue
-                    }
-                    Write-Log "INFO" "update committed"
-                } catch {
-                    Write-Log "WARN" "Commit-Update failed: $($_.Exception.Message)"
-                }
-            }
-
-            function Restore-Backup($reason) {
-                Set-UpdateStatus "rollback" "rollback_start" "准备回滚：$reason" 80 "ERROR"
-                try {
-                    $target = Read-IniValue "Files" "target"
-                    $backup = Read-IniValue "Files" "backup_file"
-
-                    Assert-NotEmpty "Files.target" $target
-                    Assert-NotEmpty "Files.backup_file" $backup
-
-                    if (!(Test-Path -LiteralPath $backup)) {
-                        Set-UpdateStatus "failed_disabled" "rollback_no_backup" "备份文件不存在: $backup" 100 "ERROR"
-                        if (Test-Path -LiteralPath $target) {
-                            Start-NormalAppVisible $target @('--update-failed')
-                        }
-                        exit 2
-                    }
-
-                    if (Test-Path -LiteralPath $target) {
-                        Remove-WithRetry $target 30
-                    }
-                    Move-WithRetry $backup $target 60
-                    Set-UpdateStatus "rollback_done" "rollback_done" "已恢复旧版本：$reason" 100 "ERROR"
-
-                    $retry = Get-RetryOrDefault "retry_count" 0
-                    $max   = Get-RetryOrDefault "max_retry" 3
-                    $retry++
-                    Write-IniValue "Retry" "retry_count" "$retry"
-
-                    if ($retry -lt $max) {
-                        Start-NormalAppVisible $target @('--retry-update')
-                    } else {
-                        Set-UpdateStatus "failed_disabled" "retry_limit_reached" "更新失败次数达到上限，已禁用本版本更新" 100 "ERROR"
-                        Start-NormalAppVisible $target @('--update-failed')
-                    }
-                    exit 1
-                } catch {
-                    Set-UpdateStatus "failed_disabled" "rollback_failed" "回滚失败: $($_.Exception.Message)" 100 "ERROR"
-                    exit 3
-                }
-            }
-
-            function Start-ProcWait($filePath, [string[]]$argList, $timeoutSec, [bool]$resetPyInstallerEnv = $false) {
-                $psi = New-Object System.Diagnostics.ProcessStartInfo
-                $psi.FileName = $filePath
-                $psi.UseShellExecute = $false
-                $psi.CreateNoWindow = $true
-                $psi.WorkingDirectory = Split-Path -Parent $filePath
-                $argsArr = @($argList | ForEach-Object { Quote-Arg $_ })
-                $psi.Arguments = if ($argsArr.Count -gt 0) { $argsArr -join ' ' } else { '' }
-
-                if ($resetPyInstallerEnv) {
-                    $psi.EnvironmentVariables["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-                    foreach ($k in @("_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
-                                     "_PYI_APPLICATION_HOME_DIR", "_PYI_SPLASH_IPC",
-                                     "_PYI_LINUX_PROCESS_NAME")) {
-                        if ($psi.EnvironmentVariables.ContainsKey($k)) {
-                            $psi.EnvironmentVariables.Remove($k)
-                        }
-                    }
-                }
-
-                $proc = [System.Diagnostics.Process]::Start($psi)
-                if ($proc.WaitForExit($timeoutSec * 1000)) {
-                    return $proc.ExitCode
-                }
-                try {
-                    if (-not $proc.HasExited) {
-                        $proc.Kill()
-                        $proc.WaitForExit(5000) | Out-Null
-                    }
-                } catch {}
-                return -1
-            }
-
-            function Start-NormalAppVisible($filePath, [string[]]$argList = @()) {
-                $workDir = Split-Path -Parent $filePath
-
-                $oldReset = [Environment]::GetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", "Process")
-                $oldPyi = @{}
-                $pyiKeys = @("_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
-                             "_PYI_APPLICATION_HOME_DIR", "_PYI_SPLASH_IPC",
-                             "_PYI_LINUX_PROCESS_NAME")
-                foreach ($k in $pyiKeys) {
-                    $oldPyi[$k] = [Environment]::GetEnvironmentVariable($k, "Process")
-                }
-
-                try {
-                    [Environment]::SetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", "1", "Process")
-                    foreach ($k in $pyiKeys) {
-                        [Environment]::SetEnvironmentVariable($k, $null, "Process")
-                    }
-
-                    $argsArr = @($argList | ForEach-Object { Quote-Arg $_ })
-                    $argString = if ($argsArr.Count -gt 0) { $argsArr -join ' ' } else { '' }
-
-                    $startArgs = @{
-                        FilePath = $filePath
-                        WorkingDirectory = $workDir
-                        WindowStyle = 'Normal'
-                    }
-                    if ($argString) {
-                        $startArgs.ArgumentList = $argString
-                    }
-                    Start-Process @startArgs
-                }
-                finally {
-                    [Environment]::SetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", $oldReset, "Process")
-                    foreach ($k in $pyiKeys) {
-                        [Environment]::SetEnvironmentVariable($k, $oldPyi[$k], "Process")
-                    }
-                }
-            }
-
-            try {
-                Set-UpdateStatus "helper_started" "helper_started" "更新 Helper 已启动" 10 "INFO"
-
-                if ($ParentPid -gt 0) {
-                    Set-UpdateStatus "helper_started" "wait_parent_exit" "等待主程序退出，PID: $ParentPid" 15 "INFO"
-                    try { Wait-Process -Id $ParentPid -Timeout 60 -ErrorAction Stop }
-                    catch {
-                        $p = Get-Process -Id $ParentPid -ErrorAction SilentlyContinue
-                        if ($p) { throw "parent still alive: $ParentPid" }
-                    }
-                }
-
-                Set-UpdateStatus "replacing" "run_update_script" "开始执行文件替换脚本" 30 "INFO"
-                $updateCode = Start-ProcWait "powershell.exe" @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $updatePs1) 120
-                if ($updateCode -ne 0) {
-                    Restore-Backup "update.ps1 failed: exit $updateCode"
-                }
-
-                Set-UpdateStatus "replacing" "verify_target_hash" "校验替换后的目标文件 SHA256" 60 "INFO"
-                $target    = Read-IniValue "Files" "target"
-                $newSha256 = Read-IniValue "Version" "new_sha256"
-                Assert-NotEmpty "Files.target" $target
-                if ($newSha256) {
-                    $actual = Get-SHA256 $target
-                    if ($actual -ne $newSha256.ToLowerInvariant()) {
-                        Restore-Backup "target hash mismatch after replace"
-                    }
-                }
-
-                Set-UpdateStatus "pending_new_verify" "start_new_exe_verify" "启动新版程序进行自检" 75 "INFO"
-                $newVersion = Read-IniValue "Version" "new_version"
-                $verifyArgs = @('--self-update-verify')
-                if ($newSha256) {
-                    $verifyArgs += @('--expected-sha256', $newSha256)
-                }
-                if ($newVersion) {
-                    $verifyArgs += @('--expected-version', $newVersion)
-                }
-                $verifyCode = Start-ProcWait $target $verifyArgs 60 $true
-                if ($verifyCode -ne 0) {
-                    Restore-Backup "verify failed: exit $verifyCode"
-                }
-
-                Set-UpdateStatus "verified" "start_normal_app" "新版验证通过，启动主程序" 100 "INFO"
-                Commit-Update
-                Start-NormalAppVisible $target
-                exit 0
-            } catch {
-                Write-Log "ERROR" "helper error: $($_.Exception.Message)"
-                Restore-Backup $_.Exception.Message
-            }
+            Run-UpdateAndVerify $ParentPid
         """).lstrip("\n")
+
+        common_base_functions = generate_common_base_functions_ps1().rstrip()
+        sha256_function = generate_sha256_function_ps1().rstrip()
+        common_state_functions = generate_common_state_functions_ps1().rstrip()
+        move_with_retry_function = generate_move_with_retry_ps1().rstrip()
+        helper_process_functions = generate_helper_process_functions_ps1().rstrip()
+        helper_cleanup_functions = generate_helper_cleanup_functions_ps1().rstrip()
+        helper_launch_functions = generate_helper_launch_functions_ps1().rstrip()
+        helper_rollback_functions = generate_helper_rollback_functions_ps1().rstrip()
+        helper_orchestration_functions = generate_helper_orchestration_functions_ps1().rstrip()
+        ps1_content = ps1_content.replace("__COMMON_BASE_FUNCTIONS__", common_base_functions)
+        ps1_content = ps1_content.replace("__SHA256_FUNCTION__", sha256_function)
+        ps1_content = ps1_content.replace("__COMMON_STATE_FUNCTIONS__", common_state_functions)
+        ps1_content = ps1_content.replace("__MOVE_WITH_RETRY_FUNCTION__", move_with_retry_function)
+        ps1_content = ps1_content.replace("__HELPER_PROCESS_FUNCTIONS__", helper_process_functions)
+        ps1_content = ps1_content.replace("__HELPER_CLEANUP_FUNCTIONS__", helper_cleanup_functions)
+        ps1_content = ps1_content.replace("__HELPER_LAUNCH_FUNCTIONS__", helper_launch_functions)
+        ps1_content = ps1_content.replace("__HELPER_ROLLBACK_FUNCTIONS__", helper_rollback_functions)
+        ps1_content = ps1_content.replace("__HELPER_ORCHESTRATION_FUNCTIONS__", helper_orchestration_functions)
 
         script_path = script_dir / "M9A_Update_Assistant_Update_Helper.ps1"
         script_path.write_text(ps1_content, encoding='utf-8-sig')
@@ -881,159 +560,13 @@ class SelfUpdater:
             $stateFile  = Join-Path $scriptDir "update_state.ini"
             $logFile    = Join-Path $scriptDir "update.log"
 
-            function Normalize-IniValue($value) {
-                if ($null -eq $value) { return "" }
-                return ([string]$value) -replace "(`r`n|`n|`r)", " "
-            }
+            __COMMON_BASE_FUNCTIONS__
 
-            function Assert-NotEmpty($name, $value) {
-                if ([string]::IsNullOrWhiteSpace($value)) {
-                    throw "missing required ini value: $name"
-                }
-            }
+            __SHA256_FUNCTION__
 
-            function Write-Log($level, $message) {
-                try {
-                    $line = "{0} -> {1} | {2} | {3}" -f $scriptTag, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $level, $message
-                    Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
-                } catch {}
-            }
+            __COMMON_STATE_FUNCTIONS__
 
-            function Read-IniValue($section, $key) {
-                try {
-                    $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
-                    $sectionEsc = [regex]::Escape("[$section]")
-                    $keyEsc = [regex]::Escape($key)
-                    $sectionPattern = "(?ms)^$sectionEsc\s*\r?\n(.*?)(?=^\s*\[|\z)"
-                    if ($content -match $sectionPattern) {
-                        $keyPattern = "(?m)^$keyEsc\s*=\s*(.*?)[\r\t ]*$"
-                        if ($matches[1] -match $keyPattern) { return $matches[1] }
-                    }
-                } catch {}
-                return ""
-            }
-
-            function Write-IniValue($section, $key, $value) {
-                try {
-                    $value = Normalize-IniValue $value
-                    $lines = @(Get-Content -LiteralPath $stateFile -Encoding UTF8 -ErrorAction Stop)
-
-                    $out = New-Object System.Collections.Generic.List[string]
-                    $inSection = $false
-                    $sectionFound = $false
-                    $keyWritten = $false
-                    $keyEsc = [regex]::Escape($key)
-
-                    foreach ($line in $lines) {
-                        if ($line -match '^\s*\[(.+?)\]\s*$') {
-                            if ($inSection -and -not $keyWritten) {
-                                $out.Add("$key = $value")
-                                $keyWritten = $true
-                            }
-                            $inSection = ($matches[1] -eq $section)
-                            if ($inSection) { $sectionFound = $true }
-                            $out.Add($line)
-                            continue
-                        }
-
-                        if ($inSection -and -not $keyWritten -and $line -match "^\s*$keyEsc\s*=") {
-                            $out.Add("$key = $value")
-                            $keyWritten = $true
-                            continue
-                        }
-
-                        $out.Add($line)
-                    }
-
-                    if (-not $sectionFound) {
-                        if ($out.Count -gt 0 -and $out[-1].Trim() -ne '') { $out.Add("") }
-                        $out.Add("[$section]")
-                        $out.Add("$key = $value")
-                    } elseif ($inSection -and -not $keyWritten) {
-                        $out.Add("$key = $value")
-                    }
-
-                    $tmp = "$stateFile.tmp"
-                    [System.IO.File]::WriteAllLines($tmp, [string[]]$out.ToArray())
-                    Move-Item -LiteralPath $tmp -Destination $stateFile -Force
-                } catch {
-                    Write-Log "ERROR" "Write-IniValue failed: $($_.Exception.Message)"
-                }
-            }
-
-            function Set-UpdateStatus($state, $step, $message, $progress, $level) {
-                $message = Normalize-IniValue $message
-                if ($state) { Write-IniValue "State" "state" $state }
-                if ($step) { Write-IniValue "State" "step" $step }
-                if ($null -ne $progress) { Write-IniValue "State" "progress" "$progress" }
-                if ($level) { Write-IniValue "State" "level" $level }
-                Write-IniValue "State" "message" $message
-                Write-IniValue "State" "updated_at" (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')
-                if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
-                Write-Log $level $message
-                try {
-                    Write-Host ("[{0}] [{1}] {2} - {3}" -f (Get-Date -Format "HH:mm:ss"), $level, $step, $message)
-                } catch {}
-            }
-
-            function Get-SHA256($filePath) {
-                $lastError = $null
-
-                $stream = $null
-                $sha256 = $null
-                try {
-                    $stream = [System.IO.File]::OpenRead($filePath)
-                    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-                    $hash = $sha256.ComputeHash($stream)
-                    return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
-                } catch {
-                    $lastError = $_.Exception.Message
-                } finally {
-                    if ($sha256) { $sha256.Dispose() }
-                    if ($stream) { $stream.Dispose() }
-                }
-
-                try {
-                    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
-                        return (Get-FileHash -Algorithm SHA256 -LiteralPath $filePath -ErrorAction Stop).Hash.ToLowerInvariant()
-                    }
-                } catch {
-                    $lastError = $_.Exception.Message
-                }
-
-                try {
-                    $certOutput = & certutil.exe -hashfile $filePath SHA256 2>&1
-                    if ($LASTEXITCODE -ne 0) {
-                        throw ($certOutput -join "`n")
-                    }
-                    foreach ($line in $certOutput) {
-                        $hex = $line -replace '\s', ''
-                        if ($hex -match '^[0-9A-Fa-f]{64}$') {
-                            return $hex.ToLowerInvariant()
-                        }
-                    }
-                    throw "certutil output did not contain a SHA256 hash"
-                } catch {
-                    $lastError = $_.Exception.Message
-                }
-
-                throw "Get-SHA256 failed: $lastError"
-            }
-
-            function Move-WithRetry($src, $dst, $timeoutSec) {
-                $deadline = (Get-Date).AddSeconds($timeoutSec)
-                $lastError = $null
-                while ((Get-Date) -lt $deadline) {
-                    try {
-                        Move-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
-                        return
-                    } catch {
-                        $lastError = $_.Exception.Message
-                        Start-Sleep -Milliseconds 1000
-                    }
-                }
-                throw "Move failed after retry: $src -> $dst ; $lastError"
-            }
+            __MOVE_WITH_RETRY_FUNCTION__
 
             try {
                 Set-UpdateStatus "replacing" "read_state" "读取更新状态文件" 35 "INFO"
@@ -1084,6 +617,15 @@ class SelfUpdater:
                 exit 1
             }
         """).lstrip("\n")
+
+        common_base_functions = generate_common_base_functions_ps1().rstrip()
+        sha256_function = generate_sha256_function_ps1().rstrip()
+        common_state_functions = generate_common_state_functions_ps1().rstrip()
+        move_with_retry_function = generate_move_with_retry_ps1().rstrip()
+        ps1_content = ps1_content.replace("__COMMON_BASE_FUNCTIONS__", common_base_functions)
+        ps1_content = ps1_content.replace("__SHA256_FUNCTION__", sha256_function)
+        ps1_content = ps1_content.replace("__COMMON_STATE_FUNCTIONS__", common_state_functions)
+        ps1_content = ps1_content.replace("__MOVE_WITH_RETRY_FUNCTION__", move_with_retry_function)
 
         script_path = script_dir / "M9A_Update_Assistant_Update.ps1"
         script_path.write_text(ps1_content, encoding='utf-8-sig')
