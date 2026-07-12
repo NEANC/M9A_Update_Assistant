@@ -537,14 +537,14 @@ class SelfUpdater:
             'helper_ps1': runtime_dir / "M9A_Update_Assistant_Update_Helper.ps1",
             'update_ps1': runtime_dir / "M9A_Update_Assistant_Update.ps1",
             'lock_file': runtime_dir / "update_started.lock",
-            'new_file': program_dir / f"{exe_path.stem}.new.exe",
-            'backup_file': program_dir / f"{exe_path.stem}.backup.exe",
+            'new_file': runtime_dir / f"{exe_path.stem}.new.exe",
+            'backup_file': runtime_dir / f"{exe_path.stem}.backup.exe",
         }
 
     @staticmethod
     def _ps_quote(path: Path) -> str:
         """转义 PowerShell 双引号字符串中的路径内容。"""
-        return str(path).replace('`', '``').replace('"', '`"')
+        return str(path).replace('`', '``').replace('$', '`$').replace('"', '`"')
 
     @staticmethod
     def _generate_helper_ps1(paths: dict[str, Path]) -> None:

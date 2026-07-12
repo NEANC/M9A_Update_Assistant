@@ -110,6 +110,8 @@ class TestUpdateRuntimePaths(unittest.TestCase):
         self.assertEqual(paths['runtime_dir'], expected_runtime_dir)
         self.assertEqual(paths['state_file'], program_dir.resolve() / 'update_state.ini')
         self.assertEqual(paths['log_file'], program_dir.resolve() / 'update.log')
+        self.assertEqual(paths['new_file'], expected_runtime_dir / 'M9A_Update_Assistant.new.exe')
+        self.assertEqual(paths['backup_file'], expected_runtime_dir / 'M9A_Update_Assistant.backup.exe')
         self.assertTrue(paths['runtime_dir'].is_dir())
 
     def test_build_update_runtime_paths_falls_back_to_program_dir_when_localappdata_mkdir_fails(self):
@@ -139,8 +141,8 @@ class TestUpdateRuntimePaths(unittest.TestCase):
         with mock.patch.dict(os.environ, {'LOCALAPPDATA': ''}):
             paths = updater._build_update_runtime_paths(current_exe, 'v4.0.0')
 
-        self.assertEqual(paths['new_file'], program_dir.resolve() / 'Custom_Assistant.new.exe')
-        self.assertEqual(paths['backup_file'], program_dir.resolve() / 'Custom_Assistant.backup.exe')
+        self.assertEqual(paths['new_file'], paths['runtime_dir'] / 'Custom_Assistant.new.exe')
+        self.assertEqual(paths['backup_file'], paths['runtime_dir'] / 'Custom_Assistant.backup.exe')
 
     def test_build_update_runtime_paths_uses_temp_folder_runtime_dir(self):
         """传入 temp_folder 时 runtime_dir 应位于 temp_folder 下。"""
@@ -178,8 +180,8 @@ class TestUpdateRuntimePaths(unittest.TestCase):
         self.assertEqual(paths['helper_ps1'], expected_runtime_dir / 'M9A_Update_Assistant_Update_Helper.ps1')
         self.assertEqual(paths['update_ps1'], expected_runtime_dir / 'M9A_Update_Assistant_Update.ps1')
         self.assertEqual(paths['lock_file'], expected_runtime_dir / 'update_started.lock')
-        self.assertEqual(paths['new_file'], program_dir.resolve() / 'M9A_Update_Assistant.new.exe')
-        self.assertEqual(paths['backup_file'], program_dir.resolve() / 'M9A_Update_Assistant.backup.exe')
+        self.assertEqual(paths['new_file'], expected_runtime_dir / 'M9A_Update_Assistant.new.exe')
+        self.assertEqual(paths['backup_file'], expected_runtime_dir / 'M9A_Update_Assistant.backup.exe')
         self.assertTrue(paths['runtime_dir'].is_dir())
 
 
@@ -1096,6 +1098,46 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
             self.assertNotIn(pattern, helper_content)
             self.assertNotIn(pattern, update_content)
 
+    def test_ps_quote_escapes_powershell_double_quoted_string_meta_characters(self):
+        """PowerShell 双引号字符串中的路径应转义反引号、美元符号和双引号。"""
+        path = Path('C:/Program Files/M9A`Update/$cache/quoted"name.exe')
+
+        quoted = SelfUpdater._ps_quote(path)
+
+        self.assertEqual(
+            quoted,
+            str(path).replace('`', '``').replace('$', '`$').replace('"', '`"'),
+        )
+
+    def test_generated_scripts_leave_no_placeholder_tokens(self):
+        """生成脚本不应残留模板占位符。"""
+        paths = self._script_paths()
+
+        SelfUpdater._generate_helper_ps1(paths)
+        SelfUpdater._generate_update_ps1(paths)
+
+        helper_content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
+        update_content = self._read_generated("M9A_Update_Assistant_Update.ps1")
+        placeholders = (
+            "__STATE_FILE__",
+            "__LOG_FILE__",
+            "__RUNTIME_DIR__",
+            "__LOCK_FILE__",
+            "__UPDATE_PS1__",
+            "__COMMON_BASE_FUNCTIONS__",
+            "__SHA256_FUNCTION__",
+            "__COMMON_STATE_FUNCTIONS__",
+            "__MOVE_WITH_RETRY_FUNCTION__",
+            "__HELPER_PROCESS_FUNCTIONS__",
+            "__HELPER_CLEANUP_FUNCTIONS__",
+            "__HELPER_LAUNCH_FUNCTIONS__",
+            "__HELPER_ROLLBACK_FUNCTIONS__",
+            "__HELPER_ORCHESTRATION_FUNCTIONS__",
+        )
+        for placeholder in placeholders:
+            self.assertNotIn(placeholder, helper_content)
+            self.assertNotIn(placeholder, update_content)
+
     def test_replace_executable_writes_runtime_paths_to_state(self):
         """替换流程应把 runtime 相关绝对路径写入 UpdateState。"""
         program_dir = Path(self.tmpdir) / 'program'
@@ -1143,6 +1185,10 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
             self.assertEqual(state.get('Files', 'lock_file'), str(paths['lock_file']))
             self.assertEqual(state['new_file'], str(paths['new_file']))
             self.assertEqual(state['backup_file'], str(paths['backup_file']))
+            self.assertEqual(paths['new_file'].parent, paths['runtime_dir'])
+            self.assertEqual(paths['backup_file'].parent, paths['runtime_dir'])
+            self.assertEqual(paths['state_file'].parent, program_dir.resolve())
+            self.assertEqual(paths['log_file'].parent, program_dir.resolve())
             for key in ('runtime_dir', 'helper_ps1', 'update_ps1', 'lock_file', 'new_file', 'backup_file'):
                 self.assertTrue(Path(state.get('Files', key) if key.endswith(('_dir', '_ps1')) or key == 'lock_file' else state[key]).is_absolute())
         finally:
