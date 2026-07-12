@@ -100,7 +100,7 @@ class SelfUpdater:
         try:
             path.resolve().relative_to(directory.resolve())
             return True
-        except ValueError:
+        except (ValueError, OSError, RuntimeError):
             return False
 
     @staticmethod
@@ -119,28 +119,34 @@ class SelfUpdater:
         target_path = Path(target) if target else None
         runtime_dir = state.get("Files", "runtime_dir", fallback="")
         runtime_path = Path(runtime_dir) if runtime_dir else None
+        has_trusted_runtime_path = runtime_path is not None
 
         cleanup_files = []
         seen_cleanup_files = set()
 
         def add_cleanup_file(file_path: Path) -> None:
             """添加去重后的待清理文件。"""
-            resolved_path = file_path.resolve()
+            try:
+                resolved_path = file_path.resolve()
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"跳过无法解析的残留文件: {file_path}，{e}")
+                return
             if resolved_path in seen_cleanup_files:
                 return
             seen_cleanup_files.add(resolved_path)
             cleanup_files.append(file_path)
 
         runtime_file_keys = ("helper_ps1", "update_ps1", "lock_file", "new_file", "backup_file")
-        for key in runtime_file_keys:
-            file_path = state.get("Files", key, fallback="")
-            if not file_path:
-                continue
-            path = Path(file_path)
-            if runtime_path and not SelfUpdater._is_within_directory(path, runtime_path):
-                logger.warning(f"跳过越界残留文件: {path}")
-                continue
-            add_cleanup_file(path)
+        if has_trusted_runtime_path:
+            for key in runtime_file_keys:
+                file_path = state.get("Files", key, fallback="")
+                if not file_path:
+                    continue
+                path = Path(file_path)
+                if not SelfUpdater._is_within_directory(path, runtime_path):
+                    logger.warning(f"跳过越界残留文件: {path}")
+                    continue
+                add_cleanup_file(path)
 
         if target_path:
             legacy_program_dir = target_path.parent
@@ -159,7 +165,12 @@ class SelfUpdater:
         allowed_log_file = target_path.parent / "update.log" if target_path else None
         if log_file and allowed_log_file:
             recorded_log_file = Path(log_file)
-            if recorded_log_file.resolve() == allowed_log_file.resolve():
+            try:
+                is_allowed_log_file = recorded_log_file.resolve() == allowed_log_file.resolve()
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"跳过无法解析的日志文件: {recorded_log_file}，{e}")
+                is_allowed_log_file = False
+            if is_allowed_log_file:
                 add_cleanup_file(recorded_log_file)
             else:
                 logger.warning(f"跳过越界日志文件: {recorded_log_file}")
@@ -174,7 +185,7 @@ class SelfUpdater:
             except OSError as e:
                 logger.warning(f"删除残留文件失败: {file_path}，{e}")
 
-        if runtime_path:
+        if has_trusted_runtime_path:
             try:
                 runtime_path.rmdir()
             except OSError as e:
