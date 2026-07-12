@@ -468,17 +468,16 @@ class SelfUpdater:
         return Path(sys.executable).resolve()
 
     def _get_update_runtime_dir(self) -> Path:
-        """获取固定的自更新运行时目录。"""
-        workspace = Path(self.temp_folder).resolve()
-        return workspace / '.m9a_update_runtime'
+        """获取固定的自更新运行时目录，避免空 temp_folder 退化到当前工作目录。"""
+        return self._resolve_runtime_dir(self._get_exe_path().parent, '.m9a_update_runtime')
 
     def _get_update_file_paths(
             self,
             exe_path: Path,
             new_exe_path: Optional[Path] = None) -> dict[str, Path]:
-        """构建自更新运行时文件路径。"""
+        """构建自更新运行时文件路径，基于当前运行时目录策略派生路径。"""
         current_exe = Path(exe_path).resolve()
-        runtime_dir = self._get_update_runtime_dir()
+        runtime_dir = self._resolve_runtime_dir(current_exe.parent, '.m9a_update_runtime')
         new_file = Path(new_exe_path).resolve() if new_exe_path else runtime_dir / f"{current_exe.stem}.new.exe"
         return {
             'runtime_dir': runtime_dir,
@@ -492,28 +491,39 @@ class SelfUpdater:
         }
 
     def _resolve_runtime_dir(self, program_dir: Path, new_version: str) -> Path:
-        """解析并创建自更新运行时目录。"""
+        """
+        解析并创建最终自更新运行时目录。
+
+        temp_folder 配置优先，LOCALAPPDATA 仅在最终目录创建失败时回退到
+        program_dir/SelfUpdate/new_version；未配置 LOCALAPPDATA 时直接使用程序目录。
+        状态文件和日志文件由调用方继续保留在 program_dir。
+        """
         program_path = Path(program_dir).resolve()
         if self.temp_folder:
-            temp_folder = Path(self.temp_folder).resolve()
-            temp_folder.mkdir(parents=True, exist_ok=True)
-            return temp_folder / new_version
+            runtime_dir = Path(self.temp_folder).resolve() / new_version
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            return runtime_dir
 
         localappdata = os.environ.get('LOCALAPPDATA')
         if localappdata:
-            temp_folder = Path(localappdata) / 'M9A_Update_Assistant' / 'SelfUpdate'
+            runtime_dir = Path(localappdata) / 'M9A_Update_Assistant' / 'SelfUpdate' / new_version
             try:
-                temp_folder.mkdir(parents=True, exist_ok=True)
-                return temp_folder / new_version
+                runtime_dir.mkdir(parents=True, exist_ok=True)
+                return runtime_dir
             except OSError as e:
                 self.logger.debug(f"创建 LOCALAPPDATA 自更新目录失败，回退到程序目录: {e}")
 
-        temp_folder = program_path / 'SelfUpdate'
-        temp_folder.mkdir(parents=True, exist_ok=True)
-        return temp_folder / new_version
+        runtime_dir = program_path / 'SelfUpdate' / new_version
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        return runtime_dir
 
     def _build_update_runtime_paths(self, current_exe: Path, new_version: str) -> dict[str, Path]:
-        """构建自更新运行时路径字典。"""
+        """
+        构建自更新运行时路径字典。
+
+        runtime_dir 按 temp_folder、LOCALAPPDATA、program_dir fallback 的顺序解析；
+        update_state.ini 与 update.log 保留在 program_dir，供替换和回滚流程复用。
+        """
         exe_path = Path(current_exe).resolve()
         program_dir = exe_path.parent
         runtime_dir = self._resolve_runtime_dir(program_dir, new_version)

@@ -110,7 +110,37 @@ class TestUpdateRuntimePaths(unittest.TestCase):
         self.assertEqual(paths['runtime_dir'], expected_runtime_dir)
         self.assertEqual(paths['state_file'], program_dir.resolve() / 'update_state.ini')
         self.assertEqual(paths['log_file'], program_dir.resolve() / 'update.log')
-        self.assertTrue(expected_temp_folder.is_dir())
+        self.assertTrue(paths['runtime_dir'].is_dir())
+
+    def test_build_update_runtime_paths_falls_back_to_program_dir_when_localappdata_mkdir_fails(self):
+        """LOCALAPPDATA runtime_dir 创建失败时应回退到程序目录。"""
+        program_dir = Path(self.tmpdir) / 'program'
+        current_exe = program_dir / 'M9A_Update_Assistant.exe'
+        localappdata = Path(self.tmpdir) / 'localappdata'
+        blocked_runtime_dir = localappdata / 'M9A_Update_Assistant' / 'SelfUpdate' / 'v1.2.4'
+        updater = SelfUpdater('', '', self.logger)
+        blocked_runtime_dir.parent.mkdir(parents=True)
+        blocked_runtime_dir.write_text('', encoding='utf-8')
+
+        with mock.patch.dict(os.environ, {'LOCALAPPDATA': str(localappdata)}):
+            paths = updater._build_update_runtime_paths(current_exe, 'v1.2.4')
+
+        expected_runtime_dir = program_dir.resolve() / 'SelfUpdate' / 'v1.2.4'
+        self.assertEqual(paths['runtime_dir'], expected_runtime_dir)
+        self.assertEqual(paths['temp_folder'], expected_runtime_dir.parent)
+        self.assertTrue(expected_runtime_dir.is_dir())
+
+    def test_build_update_runtime_paths_uses_current_exe_stem_for_new_and_backup_files(self):
+        """new_file 和 backup_file 应基于当前 exe 文件名 stem。"""
+        program_dir = Path(self.tmpdir) / 'program'
+        current_exe = program_dir / 'Custom_Assistant.exe'
+        updater = SelfUpdater('', '', self.logger)
+
+        with mock.patch.dict(os.environ, {'LOCALAPPDATA': ''}):
+            paths = updater._build_update_runtime_paths(current_exe, 'v4.0.0')
+
+        self.assertEqual(paths['new_file'], program_dir.resolve() / 'Custom_Assistant.new.exe')
+        self.assertEqual(paths['backup_file'], program_dir.resolve() / 'Custom_Assistant.backup.exe')
 
     def test_build_update_runtime_paths_uses_temp_folder_runtime_dir(self):
         """传入 temp_folder 时 runtime_dir 应位于 temp_folder 下。"""
@@ -128,7 +158,7 @@ class TestUpdateRuntimePaths(unittest.TestCase):
         self.assertEqual(paths['runtime_dir'], expected_runtime_dir.resolve())
         self.assertEqual(paths['state_file'], program_dir.resolve() / 'update_state.ini')
         self.assertEqual(paths['log_file'], program_dir.resolve() / 'update.log')
-        self.assertTrue(temp_folder.is_dir())
+        self.assertTrue(paths['runtime_dir'].is_dir())
 
     def test_build_update_runtime_paths_falls_back_to_program_dir_without_localappdata(self):
         """LOCALAPPDATA 不可用时 runtime_dir 应回退到程序目录下。"""
@@ -150,7 +180,7 @@ class TestUpdateRuntimePaths(unittest.TestCase):
         self.assertEqual(paths['lock_file'], expected_runtime_dir / 'update_started.lock')
         self.assertEqual(paths['new_file'], program_dir.resolve() / 'M9A_Update_Assistant.new.exe')
         self.assertEqual(paths['backup_file'], program_dir.resolve() / 'M9A_Update_Assistant.backup.exe')
-        self.assertTrue(expected_temp_folder.is_dir())
+        self.assertTrue(paths['runtime_dir'].is_dir())
 
 
 class TestDetectPackageType(unittest.TestCase):
