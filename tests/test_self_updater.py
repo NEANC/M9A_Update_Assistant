@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater, _get_existing_retry_count
-from M9A_Update_Assistant import _cleanup_update_residue
+from M9A_Update_Assistant import _cleanup_update_residue, _is_safe_recovery_runtime_dir
 
 
 class TestGetExePath(unittest.TestCase):
@@ -1054,6 +1054,36 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         self.assertTrue(outside_file.exists())
         self.assertTrue(any("跳过越界残留文件" in message for message in captured.output))
 
+    def test_cleanup_update_residue_skips_polluted_empty_runtime_dir_without_runtime_files(self):
+        """verified 清理不应删除无有效运行时文件支撑的外部空 runtime_dir。"""
+        program_dir = Path(self.tmpdir) / "program"
+        external_runtime_dir = Path(self.tmpdir) / "external-runtime"
+        outside_dir = Path(self.tmpdir) / "outside"
+        program_dir.mkdir()
+        external_runtime_dir.mkdir()
+        outside_dir.mkdir()
+        target = program_dir / "M9A_Update_Assistant.exe"
+        outside_file = outside_dir / "outside.exe"
+        sys.argv[0] = str(target)
+        target.write_text("target", encoding='utf-8')
+        outside_file.write_text("outside", encoding='utf-8')
+
+        state = UpdateState()
+        state["state"] = "verified"
+        state["target"] = str(target)
+        state.set("Files", "runtime_dir", str(external_runtime_dir))
+        state.set("Files", "helper_ps1", "")
+        state.set("Files", "update_ps1", str(outside_file))
+        state.set("Files", "lock_file", "")
+        state["new_file"] = ""
+        state["backup_file"] = str(outside_file)
+        state.save()
+
+        SelfUpdater._cleanup_update_residue(self.logger)
+
+        self.assertTrue(external_runtime_dir.exists())
+        self.assertTrue(outside_file.exists())
+
     def test_cleanup_update_residue_removes_recorded_log_file(self):
         """verified 清理应删除程序目录中的状态记录 update.log。"""
         program_dir = Path(self.tmpdir) / "program"
@@ -1188,6 +1218,15 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         loaded = UpdateState.load()
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded["state"], "rollback_done")
+
+    def test_interrupted_recovering_rejects_root_runtime_dir(self):
+        """恢复入口安全判断应拒绝盘符根目录或文件系统根目录。"""
+        root_dir = Path(tempfile.gettempdir()).resolve().anchor
+        self.assertTrue(root_dir)
+        root_path = Path(root_dir)
+        backup_file = root_path / "M9A_Update_Assistant.backup.exe"
+
+        self.assertFalse(_is_safe_recovery_runtime_dir(root_path, backup_file))
 
     def test_interrupted_recovering_skips_unsafe_runtime_dir_cleanup(self):
         """恢复入口应跳过与备份文件不匹配的 runtime_dir，避免删除被污染路径。"""

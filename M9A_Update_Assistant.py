@@ -499,9 +499,11 @@ def _is_safe_recovery_runtime_dir(runtime_dir: Path, backup_file: Path) -> bool:
     try:
         runtime_path = runtime_dir.resolve()
         backup_path = backup_file.resolve()
-    except OSError:
+    except (OSError, RuntimeError):
         return False
-    if runtime_path == runtime_path.anchor:
+    if not runtime_path.anchor:
+        return False
+    if runtime_path == Path(runtime_path.anchor):
         return False
     return backup_path.is_relative_to(runtime_path)
 
