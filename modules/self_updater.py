@@ -120,7 +120,7 @@ class SelfUpdater:
         runtime_dir = state.get("Files", "runtime_dir", fallback="")
         runtime_path = Path(runtime_dir) if runtime_dir else None
         has_trusted_runtime_path = runtime_path is not None
-        has_runtime_cleanup_attempt = False
+        has_deleted_runtime_file = False
 
         cleanup_files = []
         seen_cleanup_files = set()
@@ -147,7 +147,6 @@ class SelfUpdater:
                 if not SelfUpdater._is_within_directory(path, runtime_path):
                     logger.warning(f"跳过越界残留文件: {path}")
                     continue
-                has_runtime_cleanup_attempt = True
                 add_cleanup_file(path)
 
         if target_path:
@@ -183,11 +182,13 @@ class SelfUpdater:
             try:
                 if file_path.exists() and file_path.is_file():
                     file_path.unlink()
+                    if runtime_path and SelfUpdater._is_within_directory(file_path, runtime_path):
+                        has_deleted_runtime_file = True
                     logger.debug(f"已删除残留文件: {file_path}")
             except OSError as e:
                 logger.warning(f"删除残留文件失败: {file_path}，{e}")
 
-        if has_runtime_cleanup_attempt:
+        if has_deleted_runtime_file:
             try:
                 runtime_path.rmdir()
             except OSError as e:

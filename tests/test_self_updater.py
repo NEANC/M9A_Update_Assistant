@@ -1084,6 +1084,45 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         self.assertTrue(external_runtime_dir.exists())
         self.assertTrue(outside_file.exists())
 
+    def test_cleanup_update_residue_keeps_polluted_runtime_dir_when_recorded_file_is_missing(self):
+        """verified 清理不应因边界内但不存在的 runtime 文件删除外部空 runtime_dir。"""
+        program_dir = Path(self.tmpdir) / "program"
+        external_runtime_dir = Path(self.tmpdir) / "external-runtime"
+        program_dir.mkdir()
+        external_runtime_dir.mkdir()
+        target = program_dir / "M9A_Update_Assistant.exe"
+        missing_helper = external_runtime_dir / "missing-helper.ps1"
+        sys.argv[0] = str(target)
+        target.write_text("target", encoding='utf-8')
+
+        state = UpdateState()
+        state["state"] = "verified"
+        state["target"] = str(target)
+        state.set("Files", "runtime_dir", str(external_runtime_dir))
+        state.set("Files", "helper_ps1", str(missing_helper))
+        state.save()
+
+        SelfUpdater._cleanup_update_residue(self.logger)
+
+        self.assertFalse(missing_helper.exists())
+        self.assertTrue(external_runtime_dir.exists())
+
+    def test_interrupted_recovering_returns_false_when_runtime_dir_resolve_raises(self):
+        """恢复入口安全判断遇到 runtime_dir resolve 异常时应返回 False。"""
+        runtime_dir = Path(self.tmpdir) / "runtime"
+        backup_file = runtime_dir / "app.backup.exe"
+
+        with mock.patch.object(Path, 'resolve', side_effect=RuntimeError("resolve failed")):
+            self.assertFalse(_is_safe_recovery_runtime_dir(runtime_dir, backup_file))
+
+    def test_interrupted_recovering_returns_false_when_backup_file_resolve_raises(self):
+        """恢复入口安全判断遇到 backup_file resolve 异常时应返回 False。"""
+        runtime_dir = Path(self.tmpdir) / "runtime"
+        backup_file = runtime_dir / "app.backup.exe"
+
+        with mock.patch.object(Path, 'resolve', side_effect=[runtime_dir, OSError("resolve failed")]):
+            self.assertFalse(_is_safe_recovery_runtime_dir(runtime_dir, backup_file))
+
     def test_cleanup_update_residue_removes_recorded_log_file(self):
         """verified 清理应删除程序目录中的状态记录 update.log。"""
         program_dir = Path(self.tmpdir) / "program"
