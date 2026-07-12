@@ -494,6 +494,18 @@ def _clean_self_update_cache(logger: logging.Logger) -> None:
     SelfUpdater.clean_self_update_cache(temp_folder, logger)
 
 
+def _is_safe_recovery_runtime_dir(runtime_dir: Path, backup_file: Path) -> bool:
+    """判断恢复入口中的 runtime_dir 是否可安全整目录删除。"""
+    try:
+        runtime_path = runtime_dir.resolve()
+        backup_path = backup_file.resolve()
+    except OSError:
+        return False
+    if runtime_path == runtime_path.anchor:
+        return False
+    return backup_path.is_relative_to(runtime_path)
+
+
 def _cleanup_update_residue(logger: logging.Logger, not_delete: bool = False) -> None:
     """清理上次成功更新后的残留文件
 
@@ -515,10 +527,24 @@ def _cleanup_update_residue(logger: logging.Logger, not_delete: bool = False) ->
         logger.warning("检测到上次更新未完成，尝试恢复...")
         backup_file = Path(state["backup_file"])
         target = Path(state["target"])
+        runtime_dir = Path(state["runtime_dir"]) if state["runtime_dir"] else None
+        restored = False
         if backup_file.exists() and not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(backup_file), str(target))
+            restored = True
             logger.info("已从备份恢复")
-        state.delete()
+
+        if restored:
+            if runtime_dir and runtime_dir.exists():
+                if _is_safe_recovery_runtime_dir(runtime_dir, backup_file):
+                    shutil.rmtree(runtime_dir, ignore_errors=True)
+                else:
+                    logger.warning(f"跳过越界运行时目录清理: {runtime_dir}")
+            state.transition("rollback_done")
+        else:
+            state["last_error"] = "启动时检测到未完成更新，未满足安全恢复条件"
+            state.transition("failed_disabled")
 
     elif current_state == "rollback_done":
         logger.info("检测到上次更新回滚完成，清理状态文件")

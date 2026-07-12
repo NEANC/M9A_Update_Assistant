@@ -133,10 +133,15 @@ class SelfUpdater:
             cleanup_files.append(path)
 
         log_file = state.get("Files", "log_file", fallback="")
-        if log_file:
-            cleanup_files.append(Path(log_file))
-        elif target_path:
-            cleanup_files.append(target_path.parent / "update.log")
+        allowed_log_file = target_path.parent / "update.log" if target_path else None
+        if log_file and allowed_log_file:
+            recorded_log_file = Path(log_file)
+            if recorded_log_file.resolve() == allowed_log_file.resolve():
+                cleanup_files.append(recorded_log_file)
+            else:
+                logger.warning(f"跳过越界日志文件: {recorded_log_file}")
+        elif allowed_log_file:
+            cleanup_files.append(allowed_log_file)
 
         for file_path in cleanup_files:
             try:
@@ -528,35 +533,25 @@ class SelfUpdater:
             return argv_exe
         return Path(sys.executable).resolve()
 
-    def _get_update_runtime_dir(self) -> Path:
-        """获取固定的自更新运行时目录，避免空 temp_folder 退化到当前工作目录。"""
-        return self._resolve_runtime_dir(self._get_exe_path().parent, '.m9a_update_runtime')
+    def _get_update_runtime_dir(self, exe_path: Path, new_version: str) -> Path:
+        """按生产路径策略获取指定版本的自更新运行时目录。"""
+        return self._build_update_runtime_paths(exe_path, new_version)['runtime_dir']
 
     def _get_update_file_paths(
             self,
             exe_path: Path,
-            new_exe_path: Optional[Path] = None) -> dict[str, Path]:
-        """构建自更新运行时文件路径，基于当前运行时目录策略派生路径。"""
+            new_version: str) -> dict[str, Path]:
+        """构建自更新运行时文件路径，委托生产布局策略派生路径。"""
         current_exe = Path(exe_path).resolve()
-        runtime_dir = self._resolve_runtime_dir(current_exe.parent, '.m9a_update_runtime')
-        new_file = Path(new_exe_path).resolve() if new_exe_path else runtime_dir / f"{current_exe.stem}.new.exe"
-        return {
-            'runtime_dir': runtime_dir,
-            'helper_ps1': runtime_dir / "M9A_Update_Assistant_Update_Helper.ps1",
-            'update_ps1': runtime_dir / "M9A_Update_Assistant_Update.ps1",
-            'state_file': runtime_dir / UpdateState.STATE_FILE_NAME,
-            'log_file': runtime_dir / "update.log",
-            'new_file': new_file,
-            'backup_file': runtime_dir / f"{current_exe.stem}.backup.exe",
-            'lock_file': runtime_dir / "update_started.lock",
-        }
+        paths = self._build_update_runtime_paths(current_exe, new_version)
+        return paths
 
     def _resolve_runtime_dir(self, program_dir: Path, new_version: str) -> Path:
         """
         解析并创建最终自更新运行时目录。
 
-        temp_folder 配置优先，LOCALAPPDATA 仅在最终目录创建失败时回退到
-        program_dir/SelfUpdate/new_version；未配置 LOCALAPPDATA 时直接使用程序目录。
+        temp_folder 配置优先，LOCALAPPDATA 仅在 temp_folder 为空时使用；LOCALAPPDATA
+        最终目录创建失败时才回退到 program_dir/SelfUpdate/new_version。
         状态文件和日志文件由调用方继续保留在 program_dir。
         """
         program_path = Path(program_dir).resolve()
@@ -686,7 +681,8 @@ class SelfUpdater:
         ps1_content = ps1_content.replace("__HELPER_ORCHESTRATION_FUNCTIONS__", helper_orchestration_functions)
 
         script_path = paths['helper_ps1']
-        script_path.write_text(ps1_content, encoding='utf-8-sig')
+        with open(script_path, 'w', encoding='utf-8-sig', newline='\r\n') as f:
+            f.write(ps1_content)
 
     @staticmethod
     def _generate_update_ps1(paths: dict[str, Path]) -> None:
@@ -785,7 +781,8 @@ class SelfUpdater:
         ps1_content = ps1_content.replace("__MOVE_WITH_RETRY_FUNCTION__", move_with_retry_function)
 
         script_path = paths['update_ps1']
-        script_path.write_text(ps1_content, encoding='utf-8-sig')
+        with open(script_path, 'w', encoding='utf-8-sig', newline='\r\n') as f:
+            f.write(ps1_content)
 
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
                              new_version: str, old_sha256: str,
@@ -930,14 +927,14 @@ class SelfUpdater:
         return 0
 
     @staticmethod
-    def rollback() -> bool:
+    def rollback(logger: Optional[logging.Logger] = None) -> bool:
         """
         从 INI 状态文件读取 backup_file 路径，恢复旧版
 
         Returns:
             恢复是否成功
         """
-        logger = logging.getLogger("M9AUpdateAssistant")
+        logger = logger or logging.getLogger("M9AUpdateAssistant")
         state = UpdateState.load()
         if not state:
             logger.critical("未找到更新状态文件，无法回滚")

@@ -45,7 +45,10 @@ class TestUpdateStateInit(unittest.TestCase):
         self.assertEqual(state["new_version"], "")
         self.assertEqual(state["old_sha256"], "")
         self.assertEqual(state["new_sha256"], "")
-        self.assertEqual(state["current_step"], "")
+        self.assertEqual(state["step"], "")
+        self.assertEqual(state["level"], "")
+        with self.assertRaises(KeyError):
+            _ = state["current_step"]
         self.assertEqual(state["message"], "")
         self.assertEqual(state["progress"], "")
         self.assertEqual(state["updated_at"], "")
@@ -116,6 +119,19 @@ class TestUpdateStateReadWrite(unittest.TestCase):
         state = UpdateState()
         state["last_error"] = "文件替换失败"
         self.assertEqual(state["last_error"], "文件替换失败")
+
+    def test_set_and_get_status_step_and_level(self):
+        """设置和读取与 PowerShell 状态字段一致的 step 与 level。"""
+        state = UpdateState()
+        state["step"] = "replace_done"
+        state["level"] = "INFO"
+        state.save()
+
+        loaded = UpdateState.load()
+
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded["step"], "replace_done")
+        self.assertEqual(loaded["level"], "INFO")
 
     def test_get_with_fallback(self):
         """get 方法的 fallback 参数"""

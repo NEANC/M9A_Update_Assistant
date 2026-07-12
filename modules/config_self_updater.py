@@ -29,7 +29,7 @@ class UpdateState:
     _DEFAULTS = {
         "State": {
             "state": "idle", "last_error": "",
-            "current_step": "", "message": "", "progress": "", "updated_at": "",
+            "step": "", "level": "", "message": "", "progress": "", "updated_at": "",
         },
         "Files": {
             "target": "", "runtime_dir": "", "helper_ps1": "", "update_ps1": "",

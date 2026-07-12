@@ -45,39 +45,39 @@ class TestUpdateRuntimePaths(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
         shutil.rmtree(self.other_cwd, ignore_errors=True)
 
-    def test_get_update_runtime_dir_returns_stable_workspace_path(self):
-        """runtime_dir 应返回固定 workspace 下的绝对 Path，且不依赖当前工作目录。"""
+    def test_get_update_runtime_dir_uses_production_versioned_strategy(self):
+        """runtime_dir 应按生产路径策略使用真实版本号，而不是历史固定目录名。"""
         os.chdir(self.other_cwd)
+        exe_path = Path(self.tmpdir) / 'program' / 'M9A_Update_Assistant.exe'
 
-        runtime_dir = self.updater._get_update_runtime_dir()
-        repeated_runtime_dir = self.updater._get_update_runtime_dir()
+        runtime_dir = self.updater._get_update_runtime_dir(exe_path, 'v9.9.9')
+        repeated_runtime_dir = self.updater._get_update_runtime_dir(exe_path, 'v9.9.9')
 
         self.assertIsInstance(runtime_dir, Path)
         self.assertTrue(runtime_dir.is_absolute())
-        self.assertEqual(runtime_dir, Path(self.tmpdir).resolve() / '.m9a_update_runtime')
-        self.assertIn('update_runtime', runtime_dir.name)
+        self.assertEqual(runtime_dir, Path(self.tmpdir).resolve() / 'v9.9.9')
+        self.assertEqual(runtime_dir.name, 'v9.9.9')
         self.assertEqual(runtime_dir, repeated_runtime_dir)
         self.assertNotEqual(runtime_dir.parent, Path.cwd())
 
     def test_get_update_file_paths_returns_absolute_stable_paths(self):
         """更新文件路径 helper 应返回固定 runtime_dir 下的绝对路径字典。"""
         exe_path = Path(self.tmpdir) / 'program' / 'M9A_Update_Assistant.exe'
-        new_exe_path = Path(self.tmpdir) / 'downloads' / 'new.exe'
 
-        paths = self.updater._get_update_file_paths(exe_path, new_exe_path)
-        repeated_paths = self.updater._get_update_file_paths(exe_path, new_exe_path)
+        paths = self.updater._get_update_file_paths(exe_path, 'v8.8.8')
+        repeated_paths = self.updater._get_update_file_paths(exe_path, 'v8.8.8')
 
         expected_keys = {
             'runtime_dir', 'helper_ps1', 'update_ps1', 'state_file', 'log_file',
             'new_file', 'backup_file', 'lock_file',
         }
         self.assertTrue(expected_keys.issubset(paths.keys()))
-        self.assertEqual(paths['runtime_dir'], self.updater._get_update_runtime_dir())
+        self.assertEqual(paths['runtime_dir'], self.updater._get_update_runtime_dir(exe_path, 'v8.8.8'))
         self.assertEqual(paths['helper_ps1'], paths['runtime_dir'] / 'M9A_Update_Assistant_Update_Helper.ps1')
         self.assertEqual(paths['update_ps1'], paths['runtime_dir'] / 'M9A_Update_Assistant_Update.ps1')
-        self.assertEqual(paths['state_file'], paths['runtime_dir'] / 'update_state.ini')
-        self.assertEqual(paths['log_file'], paths['runtime_dir'] / 'update.log')
-        self.assertEqual(paths['new_file'], new_exe_path.resolve())
+        self.assertEqual(paths['state_file'], exe_path.parent.resolve() / 'update_state.ini')
+        self.assertEqual(paths['log_file'], exe_path.parent.resolve() / 'update.log')
+        self.assertEqual(paths['new_file'], paths['runtime_dir'] / 'M9A_Update_Assistant.new.exe')
         self.assertEqual(paths['backup_file'], paths['runtime_dir'] / 'M9A_Update_Assistant.backup.exe')
         self.assertEqual(paths['lock_file'], paths['runtime_dir'] / 'update_started.lock')
         self.assertEqual(paths, repeated_paths)
@@ -86,12 +86,11 @@ class TestUpdateRuntimePaths(unittest.TestCase):
             self.assertTrue(path.is_absolute())
 
     def test_get_update_file_paths_defaults_new_file_to_runtime_dir(self):
-        """未显式传入 new_exe_path 时，新文件路径应位于 runtime_dir。"""
+        """未显式传入 new_version 时应要求调用方提供生产版本号。"""
         exe_path = Path(self.tmpdir) / 'program' / 'M9A_Update_Assistant.exe'
 
-        paths = self.updater._get_update_file_paths(exe_path)
-
-        self.assertEqual(paths['new_file'], paths['runtime_dir'] / 'M9A_Update_Assistant.new.exe')
+        with self.assertRaises(TypeError):
+            self.updater._get_update_file_paths(exe_path)
 
     def test_build_update_runtime_paths_defaults_to_localappdata_runtime_dir(self):
         """默认 runtime_dir 应位于 LOCALAPPDATA 下，状态和日志仍在程序目录。"""
@@ -649,6 +648,54 @@ class TestRollback(unittest.TestCase):
             self.assertEqual(f.read(), "old version content")
         self.assertFalse(os.path.exists(backup))
 
+    def test_rollback_uses_backup_file_in_runtime_dir(self):
+        """回滚应从 runtime_dir 中记录的备份文件恢复目标文件。"""
+        program_dir = Path(self.tmpdir) / "program"
+        runtime_dir = Path(self.tmpdir) / "runtime" / "v1.2.3"
+        target = program_dir / "app.exe"
+        backup = runtime_dir / "app.backup.exe"
+        logger = logging.getLogger("TestRollbackRuntimeDir")
+        program_dir.mkdir(parents=True)
+        runtime_dir.mkdir(parents=True)
+        target.write_text("new version content", encoding="utf-8")
+        backup.write_text("old version content", encoding="utf-8")
+
+        state = UpdateState()
+        state["state"] = "failed_disabled"
+        state["target"] = str(target)
+        state["runtime_dir"] = str(runtime_dir)
+        state["backup_file"] = str(backup)
+        state.save()
+
+        result = SelfUpdater.rollback(logger)
+
+        self.assertTrue(result)
+        self.assertEqual(target.read_text(encoding="utf-8"), "old version content")
+        self.assertFalse(backup.exists())
+
+
+class TestReadmeSelfUpdateDocumentation(unittest.TestCase):
+    """README 自更新说明测试"""
+
+    def test_readme_documents_self_update_runtime_layout(self):
+        """README 应记录自更新运行时文件布局。"""
+        readme_path = Path(__file__).resolve().parents[1] / "README.md"
+        content = readme_path.read_text(encoding="utf-8")
+
+        expected_fragments = (
+            "自更新运行时文件布局",
+            "程序目录根部的自更新运行时文件只保留",
+            "update_state.ini",
+            "update.log",
+            "%LOCALAPPDATA%\\M9A_Update_Assistant\\SelfUpdate\\{version}",
+            "temp_folder",
+            "program_dir\\SelfUpdate\\{version}",
+            "runtime_dir/helper_ps1/update_ps1/lock_file/new_file/backup_file",
+        )
+        for fragment in expected_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, content)
+
 
 class TestMatchAsset(unittest.TestCase):
     """_match_asset 测试"""
@@ -924,19 +971,16 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         self.assertTrue(any("跳过越界残留文件" in message for message in captured.output))
 
     def test_cleanup_update_residue_removes_recorded_log_file(self):
-        """verified 清理应优先删除状态文件记录的 update.log。"""
+        """verified 清理应删除程序目录中的状态记录 update.log。"""
         program_dir = Path(self.tmpdir) / "program"
         runtime_dir = Path(self.tmpdir) / "runtime"
-        log_dir = Path(self.tmpdir) / "logs"
         program_dir.mkdir()
         runtime_dir.mkdir()
-        log_dir.mkdir()
         target = program_dir / "M9A_Update_Assistant.exe"
-        log_file = log_dir / "update.log"
-        fallback_log = program_dir / "update.log"
+        log_file = program_dir / "update.log"
         sys.argv[0] = str(target)
 
-        for path in [target, log_file, fallback_log]:
+        for path in [target, log_file]:
             path.write_text(path.name, encoding='utf-8')
 
         state = UpdateState()
@@ -949,7 +993,36 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         SelfUpdater._cleanup_update_residue(self.logger)
 
         self.assertFalse(log_file.exists())
-        self.assertTrue(fallback_log.exists())
+
+    def test_cleanup_update_residue_skips_recorded_log_file_outside_program_dir(self):
+        """verified 清理应跳过状态中指向程序目录外的 log_file。"""
+        program_dir = Path(self.tmpdir) / "program"
+        runtime_dir = Path(self.tmpdir) / "runtime"
+        outside_dir = Path(self.tmpdir) / "logs"
+        program_dir.mkdir()
+        runtime_dir.mkdir()
+        outside_dir.mkdir()
+        target = program_dir / "M9A_Update_Assistant.exe"
+        outside_log = outside_dir / "update.log"
+        allowed_log = program_dir / "update.log"
+        sys.argv[0] = str(target)
+
+        for path in [target, outside_log, allowed_log]:
+            path.write_text(path.name, encoding='utf-8')
+
+        state = UpdateState()
+        state["state"] = "verified"
+        state["target"] = str(target)
+        state.set("Files", "runtime_dir", str(runtime_dir))
+        state.set("Files", "log_file", str(outside_log))
+        state.save()
+
+        with self.assertLogs("TestCleanup", level="WARNING") as captured:
+            SelfUpdater._cleanup_update_residue(self.logger)
+
+        self.assertTrue(outside_log.exists())
+        self.assertTrue(allowed_log.exists())
+        self.assertTrue(any("跳过越界日志文件" in message for message in captured.output))
 
     def test_cleanup_update_residue_warns_when_delete_fails(self):
         """残留文件删除失败时应至少记录 warning。"""
@@ -1002,23 +1075,96 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         self.assertTrue(backup_file.exists())
         self.assertTrue(state_file.exists())
 
-    def test_interrupted_recovering_restores(self):
-        """helper_started 且 backup 存在且 target 不存在 → 恢复备份"""
-        target = os.path.join(self.tmpdir, "app.exe")
-        backup_file = os.path.join(self.tmpdir, "app.backup.exe")
-        Path(backup_file).write_text("old binary")
+    def test_interrupted_recovering_restores_and_keeps_cleanup_basis(self):
+        """恢复备份后应清理 runtime_dir，状态转入 rollback_done 供后续明确处理。"""
+        program_dir = Path(self.tmpdir) / "program"
+        runtime_dir = Path(self.tmpdir) / "runtime"
+        target = program_dir / "app.exe"
+        backup_file = runtime_dir / "app.backup.exe"
+        helper_ps1 = runtime_dir / "helper.ps1"
+        program_dir.mkdir()
+        runtime_dir.mkdir()
+        backup_file.write_text("old binary", encoding='utf-8')
+        helper_ps1.write_text("helper", encoding='utf-8')
+        sys.argv[0] = str(target)
 
         state = UpdateState()
         state["state"] = "helper_started"
-        state["target"] = target
-        state["backup_file"] = backup_file
+        state["target"] = str(target)
+        state["backup_file"] = str(backup_file)
+        state.set("Files", "runtime_dir", str(runtime_dir))
+        state.set("Files", "helper_ps1", str(helper_ps1))
         state.save()
 
         _cleanup_update_residue(self.logger)
-        self.assertTrue(os.path.exists(target))
-        with open(target, 'r') as f:
-            self.assertEqual(f.read(), "old binary")
-        self.assertIsNone(UpdateState.load())
+
+        self.assertTrue(target.exists())
+        self.assertEqual(target.read_text(encoding='utf-8'), "old binary")
+        self.assertFalse(runtime_dir.exists())
+        loaded = UpdateState.load()
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded["state"], "rollback_done")
+
+    def test_interrupted_recovering_skips_unsafe_runtime_dir_cleanup(self):
+        """恢复入口应跳过与备份文件不匹配的 runtime_dir，避免删除被污染路径。"""
+        program_dir = Path(self.tmpdir) / "program"
+        safe_runtime_dir = Path(self.tmpdir) / "runtime"
+        unsafe_runtime_dir = Path(self.tmpdir) / "unsafe"
+        target = program_dir / "app.exe"
+        backup_file = safe_runtime_dir / "app.backup.exe"
+        unsafe_file = unsafe_runtime_dir / "keep.txt"
+        program_dir.mkdir()
+        safe_runtime_dir.mkdir()
+        unsafe_runtime_dir.mkdir()
+        backup_file.write_text("old binary", encoding='utf-8')
+        unsafe_file.write_text("do not delete", encoding='utf-8')
+        sys.argv[0] = str(target)
+
+        state = UpdateState()
+        state["state"] = "helper_started"
+        state["target"] = str(target)
+        state["backup_file"] = str(backup_file)
+        state.set("Files", "runtime_dir", str(unsafe_runtime_dir))
+        state.save()
+
+        with self.assertLogs("TestCleanup", level="WARNING") as captured:
+            _cleanup_update_residue(self.logger)
+
+        self.assertTrue(target.exists())
+        self.assertTrue(unsafe_file.exists())
+        self.assertTrue(unsafe_runtime_dir.exists())
+        self.assertTrue(any("跳过越界运行时目录" in message for message in captured.output))
+
+    def test_interrupted_recovering_without_safe_restore_keeps_state_and_runtime_basis(self):
+        """无法安全恢复时不应删除状态，避免 runtime_dir 残留且依据丢失。"""
+        program_dir = Path(self.tmpdir) / "program"
+        runtime_dir = Path(self.tmpdir) / "runtime"
+        target = program_dir / "app.exe"
+        backup_file = runtime_dir / "app.backup.exe"
+        helper_ps1 = runtime_dir / "helper.ps1"
+        program_dir.mkdir()
+        runtime_dir.mkdir()
+        target.write_text("new binary", encoding='utf-8')
+        backup_file.write_text("old binary", encoding='utf-8')
+        helper_ps1.write_text("helper", encoding='utf-8')
+        sys.argv[0] = str(target)
+
+        state = UpdateState()
+        state["state"] = "replacing"
+        state["target"] = str(target)
+        state["backup_file"] = str(backup_file)
+        state.set("Files", "runtime_dir", str(runtime_dir))
+        state.set("Files", "helper_ps1", str(helper_ps1))
+        state.save()
+
+        _cleanup_update_residue(self.logger)
+
+        self.assertTrue(runtime_dir.exists())
+        self.assertTrue(helper_ps1.exists())
+        loaded = UpdateState.load()
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded["state"], "failed_disabled")
+        self.assertEqual(loaded.get("Files", "runtime_dir"), str(runtime_dir))
 
 
 class TestGeneratedPs1Scripts(unittest.TestCase):
@@ -1297,6 +1443,22 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
         for placeholder in placeholders:
             self.assertNotIn(placeholder, helper_content)
             self.assertNotIn(placeholder, update_content)
+
+    def test_generated_scripts_are_utf8_bom_with_crlf(self):
+        """生成的 PS1 应使用 UTF-8 BOM 和 CRLF 换行。"""
+        paths = self._script_paths()
+        scripts = [
+            (SelfUpdater._generate_helper_ps1, paths['helper_ps1']),
+            (SelfUpdater._generate_update_ps1, paths['update_ps1']),
+        ]
+
+        for generator, path in scripts:
+            with self.subTest(script=path.name):
+                generator(paths)
+                content = path.read_bytes()
+                self.assertTrue(content.startswith(b'\xef\xbb\xbf'))
+                self.assertIn(b'\r\n', content)
+                self.assertNotIn(b'\n', content.replace(b'\r\n', b''))
 
     def test_replace_executable_writes_runtime_paths_to_state(self):
         """替换流程应把 runtime 相关绝对路径写入 UpdateState。"""
