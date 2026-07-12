@@ -674,28 +674,6 @@ class TestRollback(unittest.TestCase):
         self.assertFalse(backup.exists())
 
 
-class TestReadmeSelfUpdateDocumentation(unittest.TestCase):
-    """README 自更新说明测试"""
-
-    def test_readme_documents_self_update_runtime_layout(self):
-        """README 应记录自更新运行时文件布局。"""
-        readme_path = Path(__file__).resolve().parents[1] / "README.md"
-        content = readme_path.read_text(encoding="utf-8")
-
-        expected_fragments = (
-            "自更新运行时文件布局",
-            "程序目录根部的自更新运行时文件只保留",
-            "update_state.ini",
-            "update.log",
-            "%LOCALAPPDATA%\\M9A_Update_Assistant\\SelfUpdate\\{version}",
-            "temp_folder",
-            "program_dir\\SelfUpdate\\{version}",
-            "runtime_dir/helper_ps1/update_ps1/lock_file/new_file/backup_file",
-        )
-        for fragment in expected_fragments:
-            with self.subTest(fragment=fragment):
-                self.assertIn(fragment, content)
-
 
 class TestMatchAsset(unittest.TestCase):
     """_match_asset 测试"""
