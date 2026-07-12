@@ -95,6 +95,67 @@ class SelfUpdater:
         return is_bundled, local_package_type
 
     @staticmethod
+    def _is_within_directory(path: Path, directory: Path) -> bool:
+        """判断 path 解析后是否位于 directory 解析后的目录内。"""
+        try:
+            path.resolve().relative_to(directory.resolve())
+            return True
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _cleanup_update_residue(logger: logging.Logger, not_delete: bool = False) -> None:
+        """按状态文件记录路径清理上次成功更新后的运行时残留。"""
+        state = UpdateState.load()
+        if not state:
+            return
+
+        current_state = state.get("State", "state", fallback="")
+        if current_state != "verified":
+            return
+
+        logger.info("清理上次更新残留文件...")
+        target = state.get("Files", "target", fallback="")
+        target_path = Path(target) if target else None
+        runtime_dir = state.get("Files", "runtime_dir", fallback="")
+        runtime_path = Path(runtime_dir) if runtime_dir else None
+
+        cleanup_files = []
+        runtime_file_keys = ("helper_ps1", "update_ps1", "lock_file", "new_file", "backup_file")
+        for key in runtime_file_keys:
+            file_path = state.get("Files", key, fallback="")
+            if not file_path:
+                continue
+            path = Path(file_path)
+            if runtime_path and not SelfUpdater._is_within_directory(path, runtime_path):
+                logger.warning(f"跳过越界残留文件: {path}")
+                continue
+            cleanup_files.append(path)
+
+        log_file = state.get("Files", "log_file", fallback="")
+        if log_file:
+            cleanup_files.append(Path(log_file))
+        elif target_path:
+            cleanup_files.append(target_path.parent / "update.log")
+
+        for file_path in cleanup_files:
+            try:
+                if file_path.exists() and file_path.is_file():
+                    file_path.unlink()
+                    logger.debug(f"已删除残留文件: {file_path}")
+            except OSError as e:
+                logger.warning(f"删除残留文件失败: {file_path}，{e}")
+
+        if runtime_path:
+            try:
+                runtime_path.rmdir()
+            except OSError as e:
+                logger.warning(f"删除自更新运行时目录失败: {runtime_path}，{e}")
+
+        state.delete()
+        logger.info("残留文件清理完成")
+
+    @staticmethod
     def version_to_tuple(v: str) -> Tuple[int, ...]:
         """将版本号字符串转换为元组用于比较，兼容 vX.Y.Z 和 vX.Y.Z-prerelease.N"""
         try:
@@ -762,6 +823,7 @@ class SelfUpdater:
         state.set("Files", "helper_ps1", str(paths['helper_ps1']))
         state.set("Files", "update_ps1", str(paths['update_ps1']))
         state.set("Files", "lock_file", str(paths['lock_file']))
+        state.set("Files", "log_file", str(paths['log_file']))
         state["old_version"] = old_version
         state["new_version"] = new_version
         state["old_sha256"] = old_sha256

@@ -508,32 +508,9 @@ def _cleanup_update_residue(logger: logging.Logger, not_delete: bool = False) ->
     current_state = state.get("State", "state", fallback="")
 
     if current_state == "verified":
-        logger.info("清理上次更新残留文件...")
-        target_path = Path(state["target"])
-        script_dir = target_path.parent
-
-        cleanup_files = [
-            Path(state["backup_file"]),
-            script_dir / f"{target_path.stem}.old.exe",
-            script_dir / "M9A_Update_Assistant_Update_Helper.ps1",
-            script_dir / "M9A_Update_Assistant_Update.ps1",
-            script_dir / "update_started.lock",
-            script_dir / "update.log",
-        ]
-        for f in cleanup_files:
-            try:
-                if f.exists():
-                    f.unlink()
-                    logger.debug(f"已删除残留文件: {f}")
-            except OSError:
-                pass
-
-        # ── 清理自更新缓存 ──
+        SelfUpdater._cleanup_update_residue(logger, not_delete=not_delete)
         if not not_delete:
             _clean_self_update_cache(logger)
-
-        state.delete()
-        logger.info("残留文件清理完成")
     elif current_state in ("helper_started", "replacing", "pending_new_verify", "rollback"):
         logger.warning("检测到上次更新未完成，尝试恢复...")
         backup_file = Path(state["backup_file"])

@@ -823,24 +823,184 @@ class TestCleanupUpdateResidue(unittest.TestCase):
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded["state"], "failed_disabled")
 
-    def test_verified_cleans_residue(self):
-        """verified 状态 → 清理残留文件 + 删除状态文件"""
-        target = os.path.join(self.tmpdir, "M9A_Update_Assistant.exe")
-        backup = os.path.join(self.tmpdir, "M9A_Update_Assistant.backup.exe")
-        old_exe = os.path.join(self.tmpdir, "M9A_Update_Assistant.old.exe")
-        Path(backup).write_text("backup")
-        Path(old_exe).write_text("old helper")
+    @mock.patch('M9A_Update_Assistant._clean_self_update_cache')
+    def test_entry_cleanup_verified_calls_cache_cleanup_when_not_delete_false(self, mock_clean_cache):
+        """入口清理 verified 状态时 not_delete=False 应清理自更新缓存。"""
+        state = UpdateState()
+        state["state"] = "verified"
+        state.save()
+
+        _cleanup_update_residue(self.logger, not_delete=False)
+
+        mock_clean_cache.assert_called_once_with(self.logger)
+
+    @mock.patch('M9A_Update_Assistant._clean_self_update_cache')
+    def test_entry_cleanup_verified_skips_cache_cleanup_when_not_delete_true(self, mock_clean_cache):
+        """入口清理 verified 状态时 not_delete=True 应跳过自更新缓存清理。"""
+        state = UpdateState()
+        state["state"] = "verified"
+        state.save()
+
+        _cleanup_update_residue(self.logger, not_delete=True)
+
+        mock_clean_cache.assert_not_called()
+
+    def test_cleanup_update_residue_removes_recorded_runtime_files(self):
+        """verified 状态 → 按状态文件记录路径清理运行时残留。"""
+        program_dir = Path(self.tmpdir) / "program"
+        runtime_dir = Path(self.tmpdir) / "runtime"
+        program_dir.mkdir()
+        runtime_dir.mkdir()
+        target = program_dir / "M9A_Update_Assistant.exe"
+        helper_ps1 = runtime_dir / "helper.ps1"
+        update_ps1 = runtime_dir / "update.ps1"
+        lock_file = runtime_dir / "update.lock"
+        new_file = runtime_dir / "new_file.exe"
+        backup_file = runtime_dir / "backup_file.exe"
+        foreign_file = program_dir / "foreign.exe"
+        update_log = program_dir / "update.log"
+        sys.argv[0] = str(target)
+
+        for path in [target, helper_ps1, update_ps1, lock_file, new_file, backup_file, foreign_file, update_log]:
+            path.write_text(path.name, encoding='utf-8')
 
         state = UpdateState()
         state["state"] = "verified"
-        state["target"] = target
-        state["backup_file"] = backup
+        state["target"] = str(target)
+        state["new_file"] = str(new_file)
+        state["backup_file"] = str(backup_file)
+        state.set("Files", "runtime_dir", str(runtime_dir))
+        state.set("Files", "helper_ps1", str(helper_ps1))
+        state.set("Files", "update_ps1", str(update_ps1))
+        state.set("Files", "lock_file", str(lock_file))
         state.save()
 
-        _cleanup_update_residue(self.logger)
-        self.assertFalse(os.path.exists(backup))
-        self.assertFalse(os.path.exists(old_exe))
-        self.assertIsNone(UpdateState.load())
+        state_file = program_dir / UpdateState.STATE_FILE_NAME
+        SelfUpdater._cleanup_update_residue(self.logger)
+
+        self.assertTrue(target.exists())
+        self.assertFalse(helper_ps1.exists())
+        self.assertFalse(update_ps1.exists())
+        self.assertFalse(lock_file.exists())
+        self.assertFalse(new_file.exists())
+        self.assertFalse(backup_file.exists())
+        self.assertFalse(runtime_dir.exists())
+        self.assertFalse(state_file.exists())
+        self.assertFalse(update_log.exists())
+        self.assertTrue(foreign_file.exists())
+
+    def test_cleanup_update_residue_skips_recorded_files_outside_runtime_dir(self):
+        """verified 清理应跳过 runtime_dir 外的状态记录残留文件。"""
+        program_dir = Path(self.tmpdir) / "program"
+        runtime_dir = Path(self.tmpdir) / "runtime"
+        outside_dir = Path(self.tmpdir) / "outside"
+        program_dir.mkdir()
+        runtime_dir.mkdir()
+        outside_dir.mkdir()
+        target = program_dir / "M9A_Update_Assistant.exe"
+        helper_ps1 = runtime_dir / "helper.ps1"
+        outside_file = outside_dir / "outside.exe"
+        sys.argv[0] = str(target)
+
+        for path in [target, helper_ps1, outside_file]:
+            path.write_text(path.name, encoding='utf-8')
+
+        state = UpdateState()
+        state["state"] = "verified"
+        state["target"] = str(target)
+        state["new_file"] = str(outside_file)
+        state["backup_file"] = str(outside_file)
+        state.set("Files", "runtime_dir", str(runtime_dir))
+        state.set("Files", "helper_ps1", str(helper_ps1))
+        state.set("Files", "update_ps1", str(outside_file))
+        state.set("Files", "lock_file", str(outside_file))
+        state.save()
+
+        with self.assertLogs("TestCleanup", level="WARNING") as captured:
+            SelfUpdater._cleanup_update_residue(self.logger)
+
+        self.assertFalse(helper_ps1.exists())
+        self.assertTrue(outside_file.exists())
+        self.assertTrue(any("跳过越界残留文件" in message for message in captured.output))
+
+    def test_cleanup_update_residue_removes_recorded_log_file(self):
+        """verified 清理应优先删除状态文件记录的 update.log。"""
+        program_dir = Path(self.tmpdir) / "program"
+        runtime_dir = Path(self.tmpdir) / "runtime"
+        log_dir = Path(self.tmpdir) / "logs"
+        program_dir.mkdir()
+        runtime_dir.mkdir()
+        log_dir.mkdir()
+        target = program_dir / "M9A_Update_Assistant.exe"
+        log_file = log_dir / "update.log"
+        fallback_log = program_dir / "update.log"
+        sys.argv[0] = str(target)
+
+        for path in [target, log_file, fallback_log]:
+            path.write_text(path.name, encoding='utf-8')
+
+        state = UpdateState()
+        state["state"] = "verified"
+        state["target"] = str(target)
+        state.set("Files", "runtime_dir", str(runtime_dir))
+        state.set("Files", "log_file", str(log_file))
+        state.save()
+
+        SelfUpdater._cleanup_update_residue(self.logger)
+
+        self.assertFalse(log_file.exists())
+        self.assertTrue(fallback_log.exists())
+
+    def test_cleanup_update_residue_warns_when_delete_fails(self):
+        """残留文件删除失败时应至少记录 warning。"""
+        program_dir = Path(self.tmpdir) / "program"
+        runtime_dir = Path(self.tmpdir) / "runtime"
+        program_dir.mkdir()
+        runtime_dir.mkdir()
+        target = program_dir / "M9A_Update_Assistant.exe"
+        helper_ps1 = runtime_dir / "helper.ps1"
+        sys.argv[0] = str(target)
+        target.write_text("target", encoding='utf-8')
+        helper_ps1.write_text("helper", encoding='utf-8')
+
+        state = UpdateState()
+        state["state"] = "verified"
+        state["target"] = str(target)
+        state.set("Files", "runtime_dir", str(runtime_dir))
+        state.set("Files", "helper_ps1", str(helper_ps1))
+        state.save()
+
+        with mock.patch.object(Path, 'unlink', side_effect=OSError("locked")):
+            with self.assertLogs("TestCleanup", level="WARNING") as captured:
+                SelfUpdater._cleanup_update_residue(self.logger)
+
+        self.assertTrue(any("删除残留文件失败" in message for message in captured.output))
+
+    def test_cleanup_update_residue_keeps_runtime_dir_when_not_verified(self):
+        """非 verified 状态 → 不清理 runtime_dir、backup、状态文件。"""
+        program_dir = Path(self.tmpdir) / "program"
+        runtime_dir = Path(self.tmpdir) / "runtime"
+        program_dir.mkdir()
+        runtime_dir.mkdir()
+        target = program_dir / "M9A_Update_Assistant.exe"
+        backup_file = runtime_dir / "backup_file.exe"
+        sys.argv[0] = str(target)
+        target.write_text("target", encoding='utf-8')
+        backup_file.write_text("backup", encoding='utf-8')
+
+        state = UpdateState()
+        state["state"] = "replacing"
+        state["target"] = str(target)
+        state["backup_file"] = str(backup_file)
+        state.set("Files", "runtime_dir", str(runtime_dir))
+        state.save()
+
+        state_file = program_dir / UpdateState.STATE_FILE_NAME
+        SelfUpdater._cleanup_update_residue(self.logger)
+
+        self.assertTrue(runtime_dir.exists())
+        self.assertTrue(backup_file.exists())
+        self.assertTrue(state_file.exists())
 
     def test_interrupted_recovering_restores(self):
         """helper_started 且 backup 存在且 target 不存在 → 恢复备份"""
@@ -1183,14 +1343,15 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
             self.assertEqual(state.get('Files', 'helper_ps1'), str(paths['helper_ps1']))
             self.assertEqual(state.get('Files', 'update_ps1'), str(paths['update_ps1']))
             self.assertEqual(state.get('Files', 'lock_file'), str(paths['lock_file']))
+            self.assertEqual(state.get('Files', 'log_file'), str(paths['log_file']))
             self.assertEqual(state['new_file'], str(paths['new_file']))
             self.assertEqual(state['backup_file'], str(paths['backup_file']))
             self.assertEqual(paths['new_file'].parent, paths['runtime_dir'])
             self.assertEqual(paths['backup_file'].parent, paths['runtime_dir'])
             self.assertEqual(paths['state_file'].parent, program_dir.resolve())
             self.assertEqual(paths['log_file'].parent, program_dir.resolve())
-            for key in ('runtime_dir', 'helper_ps1', 'update_ps1', 'lock_file', 'new_file', 'backup_file'):
-                self.assertTrue(Path(state.get('Files', key) if key.endswith(('_dir', '_ps1')) or key == 'lock_file' else state[key]).is_absolute())
+            for key in ('runtime_dir', 'helper_ps1', 'update_ps1', 'lock_file', 'log_file', 'new_file', 'backup_file'):
+                self.assertTrue(Path(state.get('Files', key)).is_absolute())
         finally:
             sys.argv[0] = original_argv0
             _cleanup_state_file()
