@@ -29,6 +29,130 @@ class TestGetExePath(unittest.TestCase):
         self.assertIsInstance(path, Path)
 
 
+class TestUpdateRuntimePaths(unittest.TestCase):
+    """更新运行时路径 helper 测试"""
+
+    def setUp(self):
+        _suppress_logs()
+        self.tmpdir = tempfile.mkdtemp()
+        self.original_cwd = os.getcwd()
+        self.other_cwd = tempfile.mkdtemp()
+        self.logger = logging.getLogger("TestUpdateRuntimePaths")
+        self.updater = SelfUpdater('', self.tmpdir, self.logger)
+
+    def tearDown(self):
+        os.chdir(self.original_cwd)
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        shutil.rmtree(self.other_cwd, ignore_errors=True)
+
+    def test_get_update_runtime_dir_returns_stable_workspace_path(self):
+        """runtime_dir 应返回固定 workspace 下的绝对 Path，且不依赖当前工作目录。"""
+        os.chdir(self.other_cwd)
+
+        runtime_dir = self.updater._get_update_runtime_dir()
+        repeated_runtime_dir = self.updater._get_update_runtime_dir()
+
+        self.assertIsInstance(runtime_dir, Path)
+        self.assertTrue(runtime_dir.is_absolute())
+        self.assertEqual(runtime_dir, Path(self.tmpdir).resolve() / '.m9a_update_runtime')
+        self.assertIn('update_runtime', runtime_dir.name)
+        self.assertEqual(runtime_dir, repeated_runtime_dir)
+        self.assertNotEqual(runtime_dir.parent, Path.cwd())
+
+    def test_get_update_file_paths_returns_absolute_stable_paths(self):
+        """更新文件路径 helper 应返回固定 runtime_dir 下的绝对路径字典。"""
+        exe_path = Path(self.tmpdir) / 'program' / 'M9A_Update_Assistant.exe'
+        new_exe_path = Path(self.tmpdir) / 'downloads' / 'new.exe'
+
+        paths = self.updater._get_update_file_paths(exe_path, new_exe_path)
+        repeated_paths = self.updater._get_update_file_paths(exe_path, new_exe_path)
+
+        expected_keys = {
+            'runtime_dir', 'helper_ps1', 'update_ps1', 'state_file', 'log_file',
+            'new_file', 'backup_file', 'lock_file',
+        }
+        self.assertTrue(expected_keys.issubset(paths.keys()))
+        self.assertEqual(paths['runtime_dir'], self.updater._get_update_runtime_dir())
+        self.assertEqual(paths['helper_ps1'], paths['runtime_dir'] / 'M9A_Update_Assistant_Update_Helper.ps1')
+        self.assertEqual(paths['update_ps1'], paths['runtime_dir'] / 'M9A_Update_Assistant_Update.ps1')
+        self.assertEqual(paths['state_file'], paths['runtime_dir'] / 'update_state.ini')
+        self.assertEqual(paths['log_file'], paths['runtime_dir'] / 'update.log')
+        self.assertEqual(paths['new_file'], new_exe_path.resolve())
+        self.assertEqual(paths['backup_file'], paths['runtime_dir'] / 'M9A_Update_Assistant.backup.exe')
+        self.assertEqual(paths['lock_file'], paths['runtime_dir'] / 'update_started.lock')
+        self.assertEqual(paths, repeated_paths)
+        for path in paths.values():
+            self.assertIsInstance(path, Path)
+            self.assertTrue(path.is_absolute())
+
+    def test_get_update_file_paths_defaults_new_file_to_runtime_dir(self):
+        """未显式传入 new_exe_path 时，新文件路径应位于 runtime_dir。"""
+        exe_path = Path(self.tmpdir) / 'program' / 'M9A_Update_Assistant.exe'
+
+        paths = self.updater._get_update_file_paths(exe_path)
+
+        self.assertEqual(paths['new_file'], paths['runtime_dir'] / 'M9A_Update_Assistant.new.exe')
+
+    def test_build_update_runtime_paths_defaults_to_localappdata_runtime_dir(self):
+        """默认 runtime_dir 应位于 LOCALAPPDATA 下，状态和日志仍在程序目录。"""
+        program_dir = Path(self.tmpdir) / 'program'
+        current_exe = program_dir / 'M9A_Update_Assistant.exe'
+        localappdata = Path(self.tmpdir) / 'localappdata'
+        updater = SelfUpdater('', '', self.logger)
+
+        with mock.patch.dict(os.environ, {'LOCALAPPDATA': str(localappdata)}):
+            paths = updater._build_update_runtime_paths(current_exe, 'v1.2.3')
+
+        expected_temp_folder = localappdata / 'M9A_Update_Assistant' / 'SelfUpdate'
+        expected_runtime_dir = expected_temp_folder / 'v1.2.3'
+        self.assertEqual(paths['program_dir'], program_dir.resolve())
+        self.assertEqual(paths['temp_folder'], expected_temp_folder)
+        self.assertEqual(paths['runtime_dir'], expected_runtime_dir)
+        self.assertEqual(paths['state_file'], program_dir.resolve() / 'update_state.ini')
+        self.assertEqual(paths['log_file'], program_dir.resolve() / 'update.log')
+        self.assertTrue(expected_temp_folder.is_dir())
+
+    def test_build_update_runtime_paths_uses_temp_folder_runtime_dir(self):
+        """传入 temp_folder 时 runtime_dir 应位于 temp_folder 下。"""
+        program_dir = Path(self.tmpdir) / 'program'
+        current_exe = program_dir / 'M9A_Update_Assistant.exe'
+        temp_folder = Path(self.tmpdir) / 'custom_runtime'
+        localappdata = Path(self.tmpdir) / 'localappdata'
+        updater = SelfUpdater('', str(temp_folder), self.logger)
+
+        with mock.patch.dict(os.environ, {'LOCALAPPDATA': str(localappdata)}):
+            paths = updater._build_update_runtime_paths(current_exe, 'v2.0.0')
+
+        expected_runtime_dir = temp_folder / 'v2.0.0'
+        self.assertEqual(paths['temp_folder'], temp_folder.resolve())
+        self.assertEqual(paths['runtime_dir'], expected_runtime_dir.resolve())
+        self.assertEqual(paths['state_file'], program_dir.resolve() / 'update_state.ini')
+        self.assertEqual(paths['log_file'], program_dir.resolve() / 'update.log')
+        self.assertTrue(temp_folder.is_dir())
+
+    def test_build_update_runtime_paths_falls_back_to_program_dir_without_localappdata(self):
+        """LOCALAPPDATA 不可用时 runtime_dir 应回退到程序目录下。"""
+        program_dir = Path(self.tmpdir) / 'program'
+        current_exe = program_dir / 'M9A_Update_Assistant.exe'
+        updater = SelfUpdater('', '', self.logger)
+
+        with mock.patch.dict(os.environ, {'LOCALAPPDATA': ''}):
+            paths = updater._build_update_runtime_paths(current_exe, 'v3.0.0')
+
+        expected_temp_folder = program_dir.resolve() / 'SelfUpdate'
+        expected_runtime_dir = expected_temp_folder / 'v3.0.0'
+        self.assertEqual(paths['temp_folder'], expected_temp_folder)
+        self.assertEqual(paths['runtime_dir'], expected_runtime_dir)
+        self.assertEqual(paths['state_file'], program_dir.resolve() / 'update_state.ini')
+        self.assertEqual(paths['log_file'], program_dir.resolve() / 'update.log')
+        self.assertEqual(paths['helper_ps1'], expected_runtime_dir / 'M9A_Update_Assistant_Update_Helper.ps1')
+        self.assertEqual(paths['update_ps1'], expected_runtime_dir / 'M9A_Update_Assistant_Update.ps1')
+        self.assertEqual(paths['lock_file'], expected_runtime_dir / 'update_started.lock')
+        self.assertEqual(paths['new_file'], program_dir.resolve() / 'M9A_Update_Assistant.new.exe')
+        self.assertEqual(paths['backup_file'], program_dir.resolve() / 'M9A_Update_Assistant.backup.exe')
+        self.assertTrue(expected_temp_folder.is_dir())
+
+
 class TestDetectPackageType(unittest.TestCase):
     """detect_package_type 静态方法测试"""
 

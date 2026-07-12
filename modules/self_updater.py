@@ -467,6 +467,70 @@ class SelfUpdater:
             return argv_exe
         return Path(sys.executable).resolve()
 
+    def _get_update_runtime_dir(self) -> Path:
+        """获取固定的自更新运行时目录。"""
+        workspace = Path(self.temp_folder).resolve()
+        return workspace / '.m9a_update_runtime'
+
+    def _get_update_file_paths(
+            self,
+            exe_path: Path,
+            new_exe_path: Optional[Path] = None) -> dict[str, Path]:
+        """构建自更新运行时文件路径。"""
+        current_exe = Path(exe_path).resolve()
+        runtime_dir = self._get_update_runtime_dir()
+        new_file = Path(new_exe_path).resolve() if new_exe_path else runtime_dir / f"{current_exe.stem}.new.exe"
+        return {
+            'runtime_dir': runtime_dir,
+            'helper_ps1': runtime_dir / "M9A_Update_Assistant_Update_Helper.ps1",
+            'update_ps1': runtime_dir / "M9A_Update_Assistant_Update.ps1",
+            'state_file': runtime_dir / UpdateState.STATE_FILE_NAME,
+            'log_file': runtime_dir / "update.log",
+            'new_file': new_file,
+            'backup_file': runtime_dir / f"{current_exe.stem}.backup.exe",
+            'lock_file': runtime_dir / "update_started.lock",
+        }
+
+    def _resolve_runtime_dir(self, program_dir: Path, new_version: str) -> Path:
+        """解析并创建自更新运行时目录。"""
+        program_path = Path(program_dir).resolve()
+        if self.temp_folder:
+            temp_folder = Path(self.temp_folder).resolve()
+            temp_folder.mkdir(parents=True, exist_ok=True)
+            return temp_folder / new_version
+
+        localappdata = os.environ.get('LOCALAPPDATA')
+        if localappdata:
+            temp_folder = Path(localappdata) / 'M9A_Update_Assistant' / 'SelfUpdate'
+            try:
+                temp_folder.mkdir(parents=True, exist_ok=True)
+                return temp_folder / new_version
+            except OSError as e:
+                self.logger.debug(f"创建 LOCALAPPDATA 自更新目录失败，回退到程序目录: {e}")
+
+        temp_folder = program_path / 'SelfUpdate'
+        temp_folder.mkdir(parents=True, exist_ok=True)
+        return temp_folder / new_version
+
+    def _build_update_runtime_paths(self, current_exe: Path, new_version: str) -> dict[str, Path]:
+        """构建自更新运行时路径字典。"""
+        exe_path = Path(current_exe).resolve()
+        program_dir = exe_path.parent
+        runtime_dir = self._resolve_runtime_dir(program_dir, new_version)
+        temp_folder = runtime_dir.parent
+        return {
+            'program_dir': program_dir,
+            'state_file': program_dir / UpdateState.STATE_FILE_NAME,
+            'log_file': program_dir / 'update.log',
+            'temp_folder': temp_folder,
+            'runtime_dir': runtime_dir,
+            'helper_ps1': runtime_dir / "M9A_Update_Assistant_Update_Helper.ps1",
+            'update_ps1': runtime_dir / "M9A_Update_Assistant_Update.ps1",
+            'lock_file': runtime_dir / "update_started.lock",
+            'new_file': program_dir / f"{exe_path.stem}.new.exe",
+            'backup_file': program_dir / f"{exe_path.stem}.backup.exe",
+        }
+
     @staticmethod
     def _generate_helper_ps1(script_dir: Path) -> None:
         """
