@@ -355,8 +355,9 @@ class TestCheckSelfUpdate(unittest.TestCase):
         from modules.download_manager import DownloadManager
         from modules.zip_manager import ZipManager
 
+        sys.argv[0] = os.path.join(self.tmpdir, "test_app.py")
         gh = GitHubReleaseClient('test/repo', 'release', '', self.logger)
-        dm = DownloadManager('', '/tmp', self.logger)
+        dm = DownloadManager('', self.tmpdir, self.logger)
         zm = ZipManager(self.logger)
 
         result = self.su.check_self_update('v1.0.0', gh, dm, zm)
