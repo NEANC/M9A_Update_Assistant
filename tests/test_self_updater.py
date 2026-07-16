@@ -1602,6 +1602,8 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
 
     def test_replace_executable_writes_runtime_paths_to_state(self):
         """替换流程应把 runtime 相关绝对路径写入 UpdateState。"""
+        if sys.platform != 'win32':
+            self.skipTest("仅在 Windows 上支持 subprocess.CREATE_NEW_PROCESS_GROUP")
         program_dir = Path(self.tmpdir) / 'program'
         program_dir.mkdir()
         current_exe = program_dir / 'M9A_Update_Assistant.exe'
