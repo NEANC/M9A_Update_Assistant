@@ -19,7 +19,7 @@ from modules.logger_manager import (
     raw_read_save_enabled,
     setup_logger,
 )
-from modules.m9a_updater import M9AUpdater
+from modules.m9a_updater import M9AUpdater, _parse_version_to_tuple, find_best_config_version
 from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater
 from modules.version import VERSION, print_info
@@ -196,6 +196,9 @@ class M9AUpdateAssistant:
         download_dir.mkdir(parents=True, exist_ok=True)
 
         cli_url = self._github.find_download_url(release_info, cli_zip_pattern)
+        if not cached_cli and not cli_url:
+            self.logger.critical(f"未找到版本 {tag_name} 的 CLI ZIP 文件，匹配规则: {cli_zip_pattern}，更新终止")
+            return {'error': 'missing_cli_zip'}
 
         gui_url = self._github.find_download_url(
             release_info, 'M9A-win-x86_64-v*-*.zip',
@@ -346,6 +349,8 @@ class M9AUpdateAssistant:
         cli_has_deps = None
 
         download_result = self._download_latest_release(release_info, cached_cli=cli_zip)
+        if download_result and download_result.get('error'):
+            return False
         if download_result:
             downloaded_files = download_result['files']
             cli_keyword = download_result['cli_keyword']
@@ -372,7 +377,7 @@ class M9AUpdateAssistant:
                 cli_zip = info
                 cli_has_deps = self._zip.check_lite_zip_has_deps(cli_zip)
             else:
-                self.logger.critical("未找到 CLI ZIP 文件，更新终止")
+                self.logger.critical(f"未找到版本 {latest_version} 的 CLI ZIP 文件，匹配规则: {self.config.cli_zip_pattern}，更新终止")
                 return False
 
         self.logger.info(f"使用 CLI ZIP 文件: {cli_zip}")
@@ -411,7 +416,26 @@ class M9AUpdateAssistant:
                 continue
 
             if old_version:
-                if not self._updater.restore_config(m9a_folder, old_version):
+                # 降级时查找更匹配的历史版本配置
+                old_version_tuple = _parse_version_to_tuple(old_version)
+                target_version_tuple = _parse_version_to_tuple(version)
+                is_downgrade = (
+                    bool(target_version)
+                    and old_version_tuple
+                    and target_version_tuple
+                    and old_version_tuple > target_version_tuple
+                )
+                if is_downgrade:
+                    best_version = find_best_config_version(
+                        self._updater.archive_dir,
+                        M9AUpdater.get_backup_name(m9a_folder),
+                        old_version,
+                        version,
+                        self.logger,
+                    )
+                else:
+                    best_version = old_version
+                if not self._updater.restore_config(m9a_folder, best_version):
                     self.logger.critical(f"回写 config 失败: {m9a_folder}")
                     all_success = False
                     continue
@@ -475,6 +499,20 @@ def _clean_self_update_cache(logger: logging.Logger) -> None:
     SelfUpdater.clean_self_update_cache(temp_folder, logger)
 
 
+def _is_safe_recovery_runtime_dir(runtime_dir: Path, backup_file: Path) -> bool:
+    """判断恢复入口中的 runtime_dir 是否可安全整目录删除。"""
+    try:
+        runtime_path = runtime_dir.resolve()
+        backup_path = backup_file.resolve()
+    except (OSError, RuntimeError):
+        return False
+    if not runtime_path.anchor:
+        return False
+    if runtime_path == Path(runtime_path.anchor):
+        return False
+    return backup_path.is_relative_to(runtime_path)
+
+
 def _cleanup_update_residue(logger: logging.Logger, not_delete: bool = False) -> None:
     """清理上次成功更新后的残留文件
 
@@ -489,40 +527,31 @@ def _cleanup_update_residue(logger: logging.Logger, not_delete: bool = False) ->
     current_state = state.get("State", "state", fallback="")
 
     if current_state == "verified":
-        logger.info("清理上次更新残留文件...")
-        target_path = Path(state["target"])
-        script_dir = target_path.parent
-
-        cleanup_files = [
-            Path(state["backup_file"]),
-            script_dir / f"{target_path.stem}.old.exe",
-            script_dir / "M9A_Update_Assistant_Update_Helper.ps1",
-            script_dir / "M9A_Update_Assistant_Update.ps1",
-            script_dir / "update_started.lock",
-            script_dir / "update.log",
-        ]
-        for f in cleanup_files:
-            try:
-                if f.exists():
-                    f.unlink()
-                    logger.debug(f"已删除残留文件: {f}")
-            except OSError:
-                pass
-
-        # ── 清理自更新缓存 ──
+        SelfUpdater._cleanup_update_residue(logger, not_delete=not_delete)
         if not not_delete:
             _clean_self_update_cache(logger)
-
-        state.delete()
-        logger.info("残留文件清理完成")
     elif current_state in ("helper_started", "replacing", "pending_new_verify", "rollback"):
         logger.warning("检测到上次更新未完成，尝试恢复...")
         backup_file = Path(state["backup_file"])
         target = Path(state["target"])
+        runtime_dir = Path(state["runtime_dir"]) if state["runtime_dir"] else None
+        restored = False
         if backup_file.exists() and not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(backup_file), str(target))
+            restored = True
             logger.info("已从备份恢复")
-        state.delete()
+
+        if restored:
+            if runtime_dir and runtime_dir.exists():
+                if _is_safe_recovery_runtime_dir(runtime_dir, backup_file):
+                    shutil.rmtree(runtime_dir, ignore_errors=True)
+                else:
+                    logger.warning(f"跳过越界运行时目录清理: {runtime_dir}")
+            state.transition("rollback_done")
+        else:
+            state["last_error"] = "启动时检测到未完成更新，未满足安全恢复条件"
+            state.transition("failed_disabled")
 
     elif current_state == "rollback_done":
         logger.info("检测到上次更新回滚完成，清理状态文件")

@@ -34,13 +34,21 @@ class TestUpdateStateInit(unittest.TestCase):
         """默认文件和版本字段为空"""
         state = UpdateState()
         self.assertEqual(state["target"], "")
+        self.assertEqual(state["runtime_dir"], "")
+        self.assertEqual(state["helper_ps1"], "")
+        self.assertEqual(state["update_ps1"], "")
+        self.assertEqual(state["lock_file"], "")
+        self.assertEqual(state["log_file"], "")
         self.assertEqual(state["new_file"], "")
         self.assertEqual(state["backup_file"], "")
         self.assertEqual(state["old_version"], "")
         self.assertEqual(state["new_version"], "")
         self.assertEqual(state["old_sha256"], "")
         self.assertEqual(state["new_sha256"], "")
-        self.assertEqual(state["current_step"], "")
+        self.assertEqual(state["step"], "")
+        self.assertEqual(state["level"], "")
+        with self.assertRaises(KeyError):
+            _ = state["current_step"]
         self.assertEqual(state["message"], "")
         self.assertEqual(state["progress"], "")
         self.assertEqual(state["updated_at"], "")
@@ -78,10 +86,20 @@ class TestUpdateStateReadWrite(unittest.TestCase):
         """设置和读取文件路径"""
         state = UpdateState()
         state["target"] = r"C:\App\app.exe"
+        state["runtime_dir"] = r"C:\App\SelfUpdate\v1.0.0"
+        state["helper_ps1"] = r"C:\App\SelfUpdate\v1.0.0\helper.ps1"
+        state["update_ps1"] = r"C:\App\SelfUpdate\v1.0.0\update.ps1"
+        state["lock_file"] = r"C:\App\SelfUpdate\v1.0.0\update.lock"
+        state["log_file"] = r"C:\App\update.log"
         state["new_file"] = r"C:\App\app.new.exe"
         state["backup_file"] = r"C:\App\app.backup.exe"
 
         self.assertEqual(state["target"], r"C:\App\app.exe")
+        self.assertEqual(state["runtime_dir"], r"C:\App\SelfUpdate\v1.0.0")
+        self.assertEqual(state["helper_ps1"], r"C:\App\SelfUpdate\v1.0.0\helper.ps1")
+        self.assertEqual(state["update_ps1"], r"C:\App\SelfUpdate\v1.0.0\update.ps1")
+        self.assertEqual(state["lock_file"], r"C:\App\SelfUpdate\v1.0.0\update.lock")
+        self.assertEqual(state["log_file"], r"C:\App\update.log")
         self.assertEqual(state["new_file"], r"C:\App\app.new.exe")
         self.assertEqual(state["backup_file"], r"C:\App\app.backup.exe")
 
@@ -101,6 +119,19 @@ class TestUpdateStateReadWrite(unittest.TestCase):
         state = UpdateState()
         state["last_error"] = "文件替换失败"
         self.assertEqual(state["last_error"], "文件替换失败")
+
+    def test_set_and_get_status_step_and_level(self):
+        """设置和读取与 PowerShell 状态字段一致的 step 与 level。"""
+        state = UpdateState()
+        state["step"] = "replace_done"
+        state["level"] = "INFO"
+        state.save()
+
+        loaded = UpdateState.load()
+
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded["step"], "replace_done")
+        self.assertEqual(loaded["level"], "INFO")
 
     def test_get_with_fallback(self):
         """get 方法的 fallback 参数"""
@@ -145,6 +176,11 @@ class TestUpdateStateSaveLoad(unittest.TestCase):
         state = UpdateState()
         state["state"] = "pending_new_verify"
         state["target"] = r"C:\App\app.exe"
+        state["runtime_dir"] = r"C:\App\SelfUpdate\v1.0.0"
+        state["helper_ps1"] = r"C:\App\SelfUpdate\v1.0.0\helper.ps1"
+        state["update_ps1"] = r"C:\App\SelfUpdate\v1.0.0\update.ps1"
+        state["lock_file"] = r"C:\App\SelfUpdate\v1.0.0\update.lock"
+        state["log_file"] = r"C:\App\update.log"
         state["new_file"] = r"C:\App\app.new.exe"
         state["backup_file"] = r"C:\App\app.backup.exe"
         state["old_version"] = "v1.10.0"
@@ -160,6 +196,11 @@ class TestUpdateStateSaveLoad(unittest.TestCase):
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded["state"], "pending_new_verify")
         self.assertEqual(loaded["target"], r"C:\App\app.exe")
+        self.assertEqual(loaded["runtime_dir"], r"C:\App\SelfUpdate\v1.0.0")
+        self.assertEqual(loaded["helper_ps1"], r"C:\App\SelfUpdate\v1.0.0\helper.ps1")
+        self.assertEqual(loaded["update_ps1"], r"C:\App\SelfUpdate\v1.0.0\update.ps1")
+        self.assertEqual(loaded["lock_file"], r"C:\App\SelfUpdate\v1.0.0\update.lock")
+        self.assertEqual(loaded["log_file"], r"C:\App\update.log")
         self.assertEqual(loaded["new_file"], r"C:\App\app.new.exe")
         self.assertEqual(loaded["backup_file"], r"C:\App\app.backup.exe")
         self.assertEqual(loaded["old_version"], "v1.10.0")

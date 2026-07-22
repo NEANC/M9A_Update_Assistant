@@ -29,9 +29,12 @@ class UpdateState:
     _DEFAULTS = {
         "State": {
             "state": "idle", "last_error": "",
-            "current_step": "", "message": "", "progress": "", "updated_at": "",
+            "step": "", "level": "", "message": "", "progress": "", "updated_at": "",
         },
-        "Files": {"target": "", "new_file": "", "backup_file": ""},
+        "Files": {
+            "target": "", "runtime_dir": "", "helper_ps1": "", "update_ps1": "",
+            "lock_file": "", "log_file": "", "new_file": "", "backup_file": "",
+        },
         "Version": {"old_version": "", "new_version": "", "old_sha256": "", "new_sha256": ""},
         "Retry": {"retry_count": "0", "max_retry": "3"},
     }

@@ -3,6 +3,7 @@
 
 import logging
 import os
+import re
 import sys
 import configparser
 
@@ -203,7 +204,6 @@ class ConfigManager:
 
     def _sanitize_config_file(self) -> None:
         """逐行清理损坏行：空键值行删除，无 = 行注释掉"""
-        import re
         try:
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
@@ -332,7 +332,6 @@ class ConfigManager:
         migrated = apply_migrations(self.config, self.logger)
 
         dirty = migrated
-
 
         for section in self.DEFAULT_SECTIONS:
             if not self.config.has_section(section):

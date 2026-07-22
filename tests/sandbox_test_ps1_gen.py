@@ -22,8 +22,16 @@ def main():
 
     try:
         # ── 1. 生成两个 PS1 脚本 ──
-        SelfUpdater._generate_helper_ps1(test_dir)
-        SelfUpdater._generate_update_ps1(test_dir)
+        paths = {
+            'runtime_dir': test_dir,
+            'state_file': test_dir / "update_state.ini",
+            'log_file': test_dir / "update.log",
+            'helper_ps1': test_dir / "M9A_Update_Assistant_Update_Helper.ps1",
+            'update_ps1': test_dir / "M9A_Update_Assistant_Update.ps1",
+            'lock_file': test_dir / "update_started.lock",
+        }
+        SelfUpdater._generate_helper_ps1(paths)
+        SelfUpdater._generate_update_ps1(paths)
 
         helper_ps1 = test_dir / "M9A_Update_Assistant_Update_Helper.ps1"
         update_ps1 = test_dir / "M9A_Update_Assistant_Update.ps1"

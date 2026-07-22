@@ -5,7 +5,17 @@ sys.path.insert(0, '..')
 from modules.self_updater import SelfUpdater
 
 tmpdir = Path(tempfile.mkdtemp())
-SelfUpdater._generate_update_ps1(tmpdir)
+paths = {
+    'runtime_dir': tmpdir,
+    'state_file': tmpdir / 'update_state.ini',
+    'log_file': tmpdir / 'update.log',
+    'helper_ps1': tmpdir / 'M9A_Update_Assistant_Update_Helper.ps1',
+    'update_ps1': tmpdir / 'M9A_Update_Assistant_Update.ps1',
+    'lock_file': tmpdir / 'update_started.lock',
+    'new_file': tmpdir / 'test_app.new.exe',
+    'backup_file': tmpdir / 'test_app.backup.exe',
+}
+SelfUpdater._generate_update_ps1(paths)
 
 # 注入调试代码：在 update.ps1 的 try 块开头加 Write-Host
 script = (tmpdir / 'M9A_Update_Assistant_Update.ps1').read_text(encoding='utf-8')

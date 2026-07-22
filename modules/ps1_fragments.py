@@ -1,0 +1,443 @@
+#!/usr/bin/env python3
+# -_- coding: utf-8 -_-
+"""提供自更新 PowerShell 脚本片段生成函数。"""
+
+import textwrap
+
+
+def generate_common_base_functions_ps1() -> str:
+    """生成自更新脚本通用基础 PowerShell 函数片段。"""
+    return textwrap.dedent(r"""
+        function Normalize-IniValue($value) {
+            if ($null -eq $value) { return "" }
+            return ([string]$value) -replace "(`r`n|`n|`r)", " "
+        }
+
+        function Assert-NotEmpty($name, $value) {
+            if ([string]::IsNullOrWhiteSpace($value)) {
+                throw "missing required ini value: $name"
+            }
+        }
+
+        function Write-Log($level, $message) {
+            try {
+                $line = "{0} -> {1} | {2} | {3}" -f $scriptTag, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $level, $message
+                Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
+            } catch {}
+        }
+    """).strip() + "\n"
+
+
+def generate_common_state_functions_ps1() -> str:
+    """生成自更新脚本通用状态读写 PowerShell 函数片段。"""
+    return textwrap.dedent(r"""
+        function Read-IniValue($section, $key) {
+            try {
+                $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
+                $sectionEsc = [regex]::Escape("[$section]")
+                $keyEsc = [regex]::Escape($key)
+                $sectionPattern = "(?ms)^$sectionEsc\s*\r?\n(.*?)(?=^\s*\[|\z)"
+                if ($content -match $sectionPattern) {
+                    $keyPattern = "(?m)^$keyEsc\s*=\s*(.*?)[\r\t ]*$"
+                    if ($matches[1] -match $keyPattern) { return $matches[1] }
+                }
+            } catch {}
+            return ""
+        }
+
+        function Write-IniValue($section, $key, $value) {
+            try {
+                $value = Normalize-IniValue $value
+                $lines = @(Get-Content -LiteralPath $stateFile -Encoding UTF8 -ErrorAction Stop)
+
+                $out = New-Object System.Collections.Generic.List[string]
+                $inSection = $false
+                $sectionFound = $false
+                $keyWritten = $false
+                $keyEsc = [regex]::Escape($key)
+
+                foreach ($line in $lines) {
+                    if ($line -match '^\s*\[(.+?)\]\s*$') {
+                        if ($inSection -and -not $keyWritten) {
+                            $out.Add("$key = $value")
+                            $keyWritten = $true
+                        }
+                        $inSection = ($matches[1] -eq $section)
+                        if ($inSection) { $sectionFound = $true }
+                        $out.Add($line)
+                        continue
+                    }
+
+                    if ($inSection -and -not $keyWritten -and $line -match "^\s*$keyEsc\s*=") {
+                        $out.Add("$key = $value")
+                        $keyWritten = $true
+                        continue
+                    }
+
+                    $out.Add($line)
+                }
+
+                if (-not $sectionFound) {
+                    if ($out.Count -gt 0 -and $out[-1].Trim() -ne '') { $out.Add("") }
+                    $out.Add("[$section]")
+                    $out.Add("$key = $value")
+                } elseif ($inSection -and -not $keyWritten) {
+                    $out.Add("$key = $value")
+                }
+
+                $tmp = "$stateFile.tmp"
+                [System.IO.File]::WriteAllLines($tmp, [string[]]$out.ToArray())
+                Move-Item -LiteralPath $tmp -Destination $stateFile -Force
+            } catch {
+                Write-Log "ERROR" "Write-IniValue failed: $($_.Exception.Message)"
+            }
+        }
+
+        function Set-UpdateStatus($state, $step, $message, $progress, $level) {
+            $message = Normalize-IniValue $message
+            if ($state) { Write-IniValue "State" "state" $state }
+            if ($step) { Write-IniValue "State" "step" $step }
+            if ($null -ne $progress) { Write-IniValue "State" "progress" "$progress" }
+            if ($level) { Write-IniValue "State" "level" $level }
+            Write-IniValue "State" "message" $message
+            Write-IniValue "State" "updated_at" (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')
+            if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
+            Write-Log $level $message
+            try {
+                Write-Host ("[{0}] [{1}] {2} - {3}" -f (Get-Date -Format "HH:mm:ss"), $level, $step, $message)
+            } catch {}
+        }
+    """).strip() + "\n"
+
+
+def generate_helper_process_functions_ps1() -> str:
+    """生成 Helper 独有的进程等待与启动 PowerShell 函数片段。"""
+    return textwrap.dedent(r"""
+        function Quote-Arg($arg) {
+            if ($null -eq $arg) { return '""' }
+            $s = [string]$arg
+            $s = $s -replace '\\(?=")', '\\'
+            $s = $s -replace '"', '\"'
+            if ($s -match '\s' -or $s -eq '') {
+                return '"' + $s + '"'
+            }
+            return $s
+        }
+
+        function Start-ProcWait($filePath, [string[]]$argList, $timeoutSec, [bool]$resetPyInstallerEnv = $false) {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $filePath
+            $psi.UseShellExecute = $false
+            $psi.CreateNoWindow = $true
+            $psi.WorkingDirectory = Split-Path -Parent $filePath
+            $argsArr = @($argList | ForEach-Object { Quote-Arg $_ })
+            $psi.Arguments = if ($argsArr.Count -gt 0) { $argsArr -join ' ' } else { '' }
+
+            if ($resetPyInstallerEnv) {
+                $psi.EnvironmentVariables["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+                foreach ($k in @("_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
+                                 "_PYI_APPLICATION_HOME_DIR", "_PYI_SPLASH_IPC",
+                                 "_PYI_LINUX_PROCESS_NAME")) {
+                    if ($psi.EnvironmentVariables.ContainsKey($k)) {
+                        $psi.EnvironmentVariables.Remove($k)
+                    }
+                }
+            }
+
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            if ($proc.WaitForExit($timeoutSec * 1000)) {
+                return $proc.ExitCode
+            }
+            try {
+                if (-not $proc.HasExited) {
+                    $proc.Kill()
+                    $proc.WaitForExit(5000) | Out-Null
+                }
+            } catch {}
+            return -1
+        }
+
+        function Wait-ProcessExit($processId, $timeoutSec) {
+            if ($processId -le 0) { return }
+            Set-UpdateStatus "helper_started" "wait_parent_exit" "等待主程序退出，PID: $processId" 15 "INFO"
+            try { Wait-Process -Id $processId -Timeout $timeoutSec -ErrorAction Stop }
+            catch {
+                $p = Get-Process -Id $processId -ErrorAction SilentlyContinue
+                if ($p) { throw "parent still alive: $processId" }
+            }
+        }
+    """).strip() + "\n"
+
+
+def generate_helper_cleanup_functions_ps1() -> str:
+    """生成 Helper 独有的暂存文件与旧安装清理 PowerShell 函数片段。"""
+    return textwrap.dedent(r"""
+        function Remove-PathSafe($path, $timeoutSec) {
+            if ([string]::IsNullOrWhiteSpace($path)) { return }
+            $deadline = (Get-Date).AddSeconds($timeoutSec)
+            $lastError = $null
+            while ((Get-Date) -lt $deadline) {
+                try {
+                    if (Test-Path -LiteralPath $path) {
+                        Remove-Item -LiteralPath $path -Force -Recurse -ErrorAction Stop
+                    }
+                    return
+                } catch {
+                    $lastError = $_.Exception.Message
+                    Start-Sleep -Milliseconds 1000
+                }
+            }
+            throw "Remove failed after retry: $path ; $lastError"
+        }
+
+        function Cleanup-StagedFiles {
+            try {
+                $newFile = Read-IniValue "Files" "new_file"
+                Remove-PathSafe $newFile 10
+            } catch {
+                Write-Log "WARN" "Cleanup-StagedFiles failed: $($_.Exception.Message)"
+            }
+        }
+
+        function Cleanup-OldInstallation {
+            try {
+                $backup = Read-IniValue "Files" "backup_file"
+                Remove-PathSafe $backup 10
+                Remove-PathSafe $lockFile 10
+                Write-Log "INFO" "update committed"
+            } catch {
+                Write-Log "WARN" "Cleanup-OldInstallation failed: $($_.Exception.Message)"
+            }
+        }
+    """).strip() + "\n"
+
+
+def generate_helper_rollback_functions_ps1() -> str:
+    """生成 Helper 独有的回滚 PowerShell 函数片段。"""
+    return textwrap.dedent(r"""
+        function Get-RetryOrDefault($name, $default) {
+            $val = Read-IniValue "Retry" $name
+            if ($val -match '^\d+$') { return [int]$val }
+            return $default
+        }
+
+        function Restore-Backup($reason) {
+            Set-UpdateStatus "rollback" "rollback_start" "准备回滚：$reason" 80 "ERROR"
+            try {
+                $target = Read-IniValue "Files" "target"
+                $backup = Read-IniValue "Files" "backup_file"
+
+                Assert-NotEmpty "Files.target" $target
+                Assert-NotEmpty "Files.backup_file" $backup
+
+                if (!(Test-Path -LiteralPath $backup)) {
+                    Set-UpdateStatus "failed_disabled" "rollback_no_backup" "备份文件不存在: $backup" 100 "ERROR"
+                    if (Test-Path -LiteralPath $target) {
+                        Launch-NewVersion $target @('--update-failed')
+                    }
+                    exit 2
+                }
+
+                if (Test-Path -LiteralPath $target) {
+                    Remove-PathSafe $target 30
+                }
+                Move-WithRetry $backup $target 60
+                Set-UpdateStatus "rollback_done" "rollback_done" "已恢复旧版本：$reason" 100 "ERROR"
+
+                $retry = Get-RetryOrDefault "retry_count" 0
+                $max   = Get-RetryOrDefault "max_retry" 3
+                $retry++
+                Write-IniValue "Retry" "retry_count" "$retry"
+
+                if ($retry -lt $max) {
+                    Launch-NewVersion $target @('--retry-update')
+                } else {
+                    Set-UpdateStatus "failed_disabled" "retry_limit_reached" "更新失败次数达到上限，已禁用本版本更新" 100 "ERROR"
+                    Launch-NewVersion $target @('--update-failed')
+                }
+                exit 1
+            } catch {
+                Set-UpdateStatus "failed_disabled" "rollback_failed" "回滚失败: $($_.Exception.Message)" 100 "ERROR"
+                exit 3
+            }
+        }
+    """).strip() + "\n"
+
+
+def generate_helper_launch_functions_ps1() -> str:
+    """生成 Helper 独有的新版本启动 PowerShell 函数片段。"""
+    return textwrap.dedent(r"""
+        function Launch-NewVersion($filePath, [string[]]$argList = @()) {
+            $workDir = Split-Path -Parent $filePath
+
+            $oldReset = [Environment]::GetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", "Process")
+            $oldPyi = @{}
+            $pyiKeys = @("_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
+                         "_PYI_APPLICATION_HOME_DIR", "_PYI_SPLASH_IPC",
+                         "_PYI_LINUX_PROCESS_NAME")
+            foreach ($k in $pyiKeys) {
+                $oldPyi[$k] = [Environment]::GetEnvironmentVariable($k, "Process")
+            }
+
+            try {
+                [Environment]::SetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", "1", "Process")
+                foreach ($k in $pyiKeys) {
+                    [Environment]::SetEnvironmentVariable($k, $null, "Process")
+                }
+
+                $argsArr = @($argList | ForEach-Object { Quote-Arg $_ })
+                $argString = if ($argsArr.Count -gt 0) { $argsArr -join ' ' } else { '' }
+
+                $startArgs = @{
+                    FilePath = $filePath
+                    WorkingDirectory = $workDir
+                    WindowStyle = 'Normal'
+                }
+                if ($argString) {
+                    $startArgs.ArgumentList = $argString
+                }
+                Start-Process @startArgs
+            }
+            finally {
+                [Environment]::SetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", $oldReset, "Process")
+                foreach ($k in $pyiKeys) {
+                    [Environment]::SetEnvironmentVariable($k, $oldPyi[$k], "Process")
+                }
+            }
+        }
+    """).strip() + "\n"
+
+
+def generate_helper_orchestration_functions_ps1() -> str:
+    """生成 Helper 独有的更新编排 PowerShell 函数片段。"""
+    return textwrap.dedent(r"""
+        function Commit-Update {
+            try {
+                Write-IniValue "Retry" "retry_count" "0"
+                Write-IniValue "State" "last_error" ""
+                Write-IniValue "State" "state" "verified"
+                Cleanup-StagedFiles
+                Cleanup-OldInstallation
+            } catch {
+                Write-Log "WARN" "Commit-Update failed: $($_.Exception.Message)"
+            }
+        }
+
+        function Run-UpdateAndVerify($parentPid) {
+            try {
+                Set-UpdateStatus "helper_started" "helper_started" "更新 Helper 已启动" 10 "INFO"
+
+                Wait-ProcessExit $parentPid 60
+
+                Set-UpdateStatus "replacing" "run_update_script" "开始执行文件替换脚本" 30 "INFO"
+                $updateCode = Start-ProcWait "powershell.exe" @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $updatePs1) 120
+                if ($updateCode -ne 0) {
+                    Restore-Backup "update.ps1 failed: exit $updateCode"
+                }
+
+                Set-UpdateStatus "replacing" "verify_target_hash" "校验替换后的目标文件 SHA256" 60 "INFO"
+                $target    = Read-IniValue "Files" "target"
+                $newSha256 = Read-IniValue "Version" "new_sha256"
+                Assert-NotEmpty "Files.target" $target
+                if ($newSha256) {
+                    $actual = Get-SHA256 $target
+                    if ($actual -ne $newSha256.ToLowerInvariant()) {
+                        Restore-Backup "target hash mismatch after replace"
+                    }
+                }
+
+                Set-UpdateStatus "pending_new_verify" "start_new_exe_verify" "启动新版程序进行自检" 75 "INFO"
+                $newVersion = Read-IniValue "Version" "new_version"
+                $verifyArgs = @('--self-update-verify')
+                if ($newSha256) {
+                    $verifyArgs += @('--expected-sha256', $newSha256)
+                }
+                if ($newVersion) {
+                    $verifyArgs += @('--expected-version', $newVersion)
+                }
+                $verifyCode = Start-ProcWait $target $verifyArgs 60 $true
+                if ($verifyCode -ne 0) {
+                    Restore-Backup "verify failed: exit $verifyCode"
+                }
+
+                Set-UpdateStatus "verified" "start_normal_app" "新版验证通过，启动主程序" 100 "INFO"
+                Commit-Update
+                Launch-NewVersion $target
+                exit 0
+            } catch {
+                Write-Log "ERROR" "helper error: $($_.Exception.Message)"
+                Restore-Backup $_.Exception.Message
+            }
+        }
+    """).strip() + "\n"
+
+
+def generate_move_with_retry_ps1() -> str:
+    """生成自更新脚本通用 Move-WithRetry PowerShell 函数片段。"""
+    return textwrap.dedent(r"""
+        function Move-WithRetry($src, $dst, $timeoutSec) {
+            $deadline = (Get-Date).AddSeconds($timeoutSec)
+            $lastError = $null
+            while ((Get-Date) -lt $deadline) {
+                try {
+                    Move-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
+                    return
+                } catch {
+                    $lastError = $_.Exception.Message
+                    Start-Sleep -Milliseconds 1000
+                }
+            }
+            throw "Move failed after retry: $src -> $dst ; $lastError"
+        }
+    """).strip() + "\n"
+
+
+def generate_sha256_function_ps1() -> str:
+    """生成带多路径回退的 Get-SHA256 PowerShell 函数片段。"""
+    return textwrap.dedent(r"""
+        function Get-SHA256($filePath) {
+            $errors = @()
+
+            $stream = $null
+            $sha256 = $null
+            try {
+                $stream = [System.IO.File]::OpenRead($filePath)
+                $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                $hash = $sha256.ComputeHash($stream)
+                return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+            } catch {
+                $errors += ".NET SHA256: $($_.Exception.Message)"
+            } finally {
+                if ($sha256) { $sha256.Dispose() }
+                if ($stream) { $stream.Dispose() }
+            }
+
+            try {
+                if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+                    return (Get-FileHash -Algorithm SHA256 -LiteralPath $filePath -ErrorAction Stop).Hash.ToLowerInvariant()
+                }
+                $errors += "Get-FileHash: command not found"
+            } catch {
+                $errors += "Get-FileHash: $($_.Exception.Message)"
+            }
+
+            try {
+                $LASTEXITCODE = 0
+                $certOutput = & certutil.exe -hashfile $filePath SHA256 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    throw ($certOutput -join "`n")
+                }
+                foreach ($line in $certOutput) {
+                    $hex = $line -replace '\s', ''
+                    if ($hex -match '^[0-9A-Fa-f]{64}$') {
+                        return $hex.ToLowerInvariant()
+                    }
+                }
+                throw "certutil output did not contain a SHA256 hash"
+            } catch {
+                $errors += "certutil: $($_.Exception.Message)"
+            }
+
+            throw "Get-SHA256 failed: $($errors -join '; ')"
+        }
+    """).strip() + "\n"
