@@ -372,7 +372,7 @@ class M9AUpdateAssistant:
                 cli_zip = info
                 cli_has_deps = self._zip.check_lite_zip_has_deps(cli_zip)
             else:
-                self.logger.critical("未找到 CLI ZIP 文件，更新终止")
+                self.logger.critical(f"未找到版本 {latest_version} 的 CLI ZIP 文件，匹配规则: {self.config.cli_zip_pattern}，更新终止")
                 return False
 
         self.logger.info(f"使用 CLI ZIP 文件: {cli_zip}")

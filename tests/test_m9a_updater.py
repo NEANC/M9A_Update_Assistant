@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
+import io
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ import sys
 import tempfile
 import unittest
 
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -465,6 +467,32 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
         assistant._updater.clean_m9a_folder.return_value = True
         assistant._updater.restore_config.return_value = True
         return assistant
+
+    def test_missing_cli_zip_prints_user_visible_notice(self):
+        """找不到目标版本 CLI ZIP 时，向用户输出明确失败提示"""
+        with tempfile.TemporaryDirectory() as tmp:
+            m9a_folder = Path(tmp) / 'M9A'
+            m9a_folder.mkdir()
+            assistant = self._create_assistant(tmp, 'v4.1.1', 'v4.5.3', m9a_folder)
+            assistant._github.get_release_by_tag.return_value = {
+                'tag_name': 'v4.5.3',
+                'assets': [
+                    {'name': 'M9A-win-x86_64-v4.5.3-MXU.zip', 'browser_download_url': 'https://url/mxu'},
+                ],
+            }
+            assistant._github.parse_release_keywords.return_value = {'cli': 'Lite', 'gui_keywords': ['MFAA', 'MXU']}
+            assistant._github.find_download_url.side_effect = ['', 'https://url/mxu']
+            assistant._download_latest_release.return_value = None
+            assistant._updater.find_lite_zip.return_value = None
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                result = assistant.run_update('v4.5.3')
+
+            output = stdout.getvalue()
+            self.assertFalse(result)
+            self.assertIn('未找到版本 v4.5.3 的 CLI ZIP 文件', output)
+            self.assertIn('M9A-win-x86_64-v*-Lite.zip', output)
 
     def test_downgrade_uses_target_backup_when_exists(self):
         """实际降级且目标备份存在时，回写目标版本配置"""
