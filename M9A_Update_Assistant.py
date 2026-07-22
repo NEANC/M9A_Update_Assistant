@@ -196,6 +196,9 @@ class M9AUpdateAssistant:
         download_dir.mkdir(parents=True, exist_ok=True)
 
         cli_url = self._github.find_download_url(release_info, cli_zip_pattern)
+        if not cached_cli and not cli_url:
+            self.logger.critical(f"未找到版本 {tag_name} 的 CLI ZIP 文件，匹配规则: {cli_zip_pattern}，更新终止")
+            return {'error': 'missing_cli_zip'}
 
         gui_url = self._github.find_download_url(
             release_info, 'M9A-win-x86_64-v*-*.zip',
@@ -346,6 +349,8 @@ class M9AUpdateAssistant:
         cli_has_deps = None
 
         download_result = self._download_latest_release(release_info, cached_cli=cli_zip)
+        if download_result and download_result.get('error'):
+            return False
         if download_result:
             downloaded_files = download_result['files']
             cli_keyword = download_result['cli_keyword']

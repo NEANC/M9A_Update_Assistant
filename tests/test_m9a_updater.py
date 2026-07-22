@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
-import io
 import json
 import logging
 import os
@@ -9,7 +8,6 @@ import sys
 import tempfile
 import unittest
 
-from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -457,6 +455,7 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
             'version': target_version,
             'cli_has_deps': True,
         })
+        assistant._download = Mock()
         assistant._zip = Mock()
         assistant._zip.check_lite_zip_has_deps.return_value = True
         assistant._zip.extract_zip_with_progress.return_value = True
@@ -468,8 +467,8 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
         assistant._updater.restore_config.return_value = True
         return assistant
 
-    def test_missing_cli_zip_prints_user_visible_notice(self):
-        """找不到目标版本 CLI ZIP 时，向用户输出明确失败提示"""
+    def test_missing_cli_zip_stops_during_release_download(self):
+        """找不到目标版本 CLI ZIP 时，在资源解析阶段终止"""
         with tempfile.TemporaryDirectory() as tmp:
             m9a_folder = Path(tmp) / 'M9A'
             m9a_folder.mkdir()
@@ -482,17 +481,17 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
             }
             assistant._github.parse_release_keywords.return_value = {'cli': 'Lite', 'gui_keywords': ['MFAA', 'MXU']}
             assistant._github.find_download_url.side_effect = ['', 'https://url/mxu']
-            assistant._download_latest_release.return_value = None
+            from M9A_Update_Assistant import M9AUpdateAssistant
+
+            assistant._download_latest_release = M9AUpdateAssistant._download_latest_release.__get__(assistant)
             assistant._updater.find_lite_zip.return_value = None
-            stdout = io.StringIO()
 
-            with redirect_stdout(stdout):
-                result = assistant.run_update('v4.5.3')
+            result = assistant.run_update('v4.5.3')
 
-            output = stdout.getvalue()
             self.assertFalse(result)
-            self.assertIn('未找到版本 v4.5.3 的 CLI ZIP 文件', output)
-            self.assertIn('M9A-win-x86_64-v*-Lite.zip', output)
+            self.assertEqual(assistant._github.find_download_url.call_count, 1)
+            assistant._download.download_file_with_progress.assert_not_called()
+            self.assertEqual(assistant._updater.find_lite_zip.call_count, 1)
 
     def test_downgrade_uses_target_backup_when_exists(self):
         """实际降级且目标备份存在时，回写目标版本配置"""
