@@ -11,6 +11,7 @@ import zipfile
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 from unittest.mock import Mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -696,6 +697,44 @@ class TestDownloadLatestReleaseCliOnly(unittest.TestCase):
 
         self.assertEqual(result['files'], ['C:/cache/M9A-win-x86_64-v4.5.4-PiCLI.zip'])
         assistant._download.download_file_with_progress.assert_not_called()
+
+
+class TestMainThreadsOverride(unittest.TestCase):
+    """main() 中 CLI 线程数覆盖测试"""
+
+    @mock.patch('M9A_Update_Assistant.print_info')
+    @mock.patch('M9A_Update_Assistant.M9AUpdateAssistant')
+    @mock.patch('M9A_Update_Assistant.sys.exit')
+    def test_main_threads_overrides_download_manager(self, mock_exit, mock_assistant_class, mock_print_info):
+        """测试 CLI 线程数覆盖 DownloadManager 本次运行配置。"""
+        assistant = mock.MagicMock()
+        assistant.validate_config.return_value = True
+        assistant.run_update.return_value = True
+        assistant.check_self_update.return_value = False
+        assistant._download.download_threads = 4
+        mock_assistant_class.return_value = assistant
+
+        with mock.patch.object(sys, 'argv', ['M9A_Update_Assistant.py', '-t', '8']):
+            from M9A_Update_Assistant import main
+            main()
+
+        self.assertEqual(assistant._download.download_threads, 8)
+
+
+class TestParseCommandLineArgs(unittest.TestCase):
+    """parse_command_line_args 命令行解析测试"""
+
+    def test_parse_threads_argument(self):
+        """测试下载线程数命令行参数。"""
+        from M9A_Update_Assistant import parse_command_line_args
+
+        with mock.patch.object(sys, 'argv', ['M9A_Update_Assistant.py', '-t', '8']):
+            args = parse_command_line_args()
+        self.assertEqual(args.threads, '8')
+
+        with mock.patch.object(sys, 'argv', ['M9A_Update_Assistant.py', '--threads', '4']):
+            args = parse_command_line_args()
+        self.assertEqual(args.threads, '4')
 
 
 if __name__ == '__main__':

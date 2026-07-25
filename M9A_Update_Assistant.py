@@ -10,7 +10,7 @@ import configparser
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from modules.config_manager import ConfigManager
+from modules.config_manager import ConfigManager, parse_download_threads
 from modules.github_release_client import GitHubReleaseClient
 from modules.download_manager import DownloadManager
 from modules.logger_manager import (
@@ -82,6 +82,7 @@ class M9AUpdateAssistant:
             self.config.github_proxy,
             self.config.temp_folder,
             self.logger,
+            self.config.download_threads,
         )
         self._zip = ZipManager(self.logger)
         self._updater = M9AUpdater(self.config.archive_folder_path, self.logger)
@@ -505,6 +506,8 @@ def parse_command_line_args() -> argparse.Namespace:
     # 其他
     parser.add_argument("--not-delete", action="store_true",
                         help="不删除临时文件")
+    parser.add_argument('-t', '--threads', type=str, default='',
+                        help='下载线程数；只接受纯数字，0 或 1 表示单线程，默认 4，最大 32')
     return parser.parse_args()
 
 
@@ -552,6 +555,12 @@ def main():
     if args.update or args.update_force:
         print_info()
         assistant = M9AUpdateAssistant()
+        if args.threads:
+            assistant._download.download_threads, _ = parse_download_threads(
+                args.threads,
+                assistant.logger,
+                'CLI',
+            )
         if assistant.check_self_update(force=args.update_force):
             assistant.logger.info("已将新版本下载到临时文件夹，即将退出以完成更新...")
             sys.exit(0)
@@ -563,6 +572,13 @@ def main():
     try:
         print_info()
         assistant = M9AUpdateAssistant()
+
+        if args.threads:
+            assistant._download.download_threads, _ = parse_download_threads(
+                args.threads,
+                assistant.logger,
+                'CLI',
+            )
 
         if args.not_delete:
             assistant.keep_temp = True

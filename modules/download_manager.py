@@ -16,7 +16,8 @@ from modules.progress_bar import (
 class DownloadManager:
     """下载管理器，负责文件下载与缓存检查"""
 
-    def __init__(self, proxy: str, temp_folder: str, logger: logging.Logger):
+    def __init__(self, proxy: str, temp_folder: str, logger: logging.Logger,
+                 download_threads: int = 4):
         """
         初始化下载管理器
 
@@ -24,10 +25,12 @@ class DownloadManager:
             proxy: 代理地址
             temp_folder: 临时文件夹路径
             logger: 日志记录器
+            download_threads: 下载线程数
         """
         self.proxy = proxy
         self.temp_folder = temp_folder
         self.logger = logger
+        self.download_threads = download_threads
 
     def download_file_with_progress(self, url: str, save_path: str) -> bool:
         """
