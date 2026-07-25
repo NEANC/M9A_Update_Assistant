@@ -19,7 +19,12 @@ from modules.logger_manager import (
     raw_read_save_enabled,
     setup_logger,
 )
-from modules.m9a_updater import M9AUpdater, _parse_version_to_tuple, find_best_config_version
+from modules.m9a_updater import (
+    M9AUpdater,
+    _normalize_version_name,
+    _parse_version_to_tuple,
+    find_best_config_version,
+)
 from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater
 from modules.version import VERSION, print_info
@@ -223,9 +228,9 @@ class M9AUpdateAssistant:
         """
         for candidate in download_dir.glob(self.config.cli_zip_pattern):
             cached_version = ZipManager.get_zip_version(str(candidate))
-            if cached_version and cached_version == tag_name:
+            if cached_version and _normalize_version_name(cached_version) == _normalize_version_name(tag_name):
                 self.logger.info(f"临时文件夹存在缓存文件 {cached_version}: {candidate}")
-                if self._zip.verify_zip_integrity(str(candidate), release_info, zip_filename, self._github):
+                if self._zip.verify_zip_integrity(str(candidate), release_info, candidate.name, self._github):
                     return str(candidate)
                 self.logger.warning("缓存文件校验失败，将重新下载")
 
