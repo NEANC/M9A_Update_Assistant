@@ -41,7 +41,7 @@ class GitHubReleaseClient:
         将通配符模式编译为正则表达式
 
         Args:
-            pattern: 含 * 通配符的模式串（如 M9A-win-x86_64-v*-Lite.zip）
+            pattern: 含 * 通配符的模式串（如 M9A-win-x86_64-v*.zip）
 
         Returns:
             编译后的正则对象，匹配完整文件名
@@ -147,58 +147,28 @@ class GitHubReleaseClient:
         self.logger.error(f"获取指定 release (tag={v_tag}) 失败，已达到最大重试次数")
         return None
 
-    def find_download_url(self, release_info: Dict, pattern: str,
-                           select_smallest: bool = False,
-                           exclude_patterns: Optional[List[str]] = None) -> Optional[str]:
+    def find_download_url(self, release_info: Dict, pattern: str) -> Optional[str]:
         """
         从 release 信息中查找匹配的下载链接
 
         Args:
             release_info: GitHub release 信息
             pattern: 文件名匹配模式
-            select_smallest: 是否在多个匹配项中选择最小的文件
-            exclude_patterns: 需要排除的文件名匹配模式列表
 
         Returns:
             下载 URL，如果未找到则返回 None
         """
         assets = release_info.get('assets', [])
-        matched_assets = []
-        exclude_regexes = [self.compile_pattern(ep) for ep in (exclude_patterns or [])]
+        rx = self.compile_pattern(pattern)
 
         for asset in assets:
             asset_name = asset.get('name', '')
-            if self.compile_pattern(pattern).match(asset_name):
-                if any(rx.match(asset_name) for rx in exclude_regexes):
-                    continue
-                matched_assets.append(asset)
+            if rx.match(asset_name):
+                file_size_mb = asset.get('size', 0) / (1024 * 1024)
+                self.logger.info(f"找到匹配文件: {asset_name} ({file_size_mb:.2f} MB)")
+                return asset.get('browser_download_url')
 
-        if not matched_assets:
-            return None
-
-        if select_smallest and len(matched_assets) > 1:
-            matched_assets.sort(key=lambda x: x.get('size', float('inf')))
-            chosen_file = matched_assets[0]
-            file_name = chosen_file.get('name', '')
-            file_size_mb = chosen_file.get('size', 0) / (1024 * 1024)
-
-            file_info_list = []
-            for asset in matched_assets:
-                name = asset.get('name', '')
-                size_mb = asset.get('size', 0) / (1024 * 1024)
-                keyword = name.split('-')[-1].replace('.zip', '')
-                file_info_list.append(f"{keyword} ({size_mb:.2f} MB)")
-            file_info_str = ', '.join(file_info_list)
-
-            self.logger.info(f"找到 {len(matched_assets)} 个匹配文件: [{file_info_str}]")
-            self.logger.info(f"选择最小的图形界面版本: {file_name} ({file_size_mb:.2f} MB)")
-        else:
-            chosen_file = matched_assets[0]
-            file_name = chosen_file.get('name', '')
-            file_size_mb = chosen_file.get('size', 0) / (1024 * 1024)
-            self.logger.info(f"找到匹配文件: {file_name} ({file_size_mb:.2f} MB)")
-
-        return matched_assets[0].get('browser_download_url')
+        return None
 
     def get_asset_sha256(self, release_info: Dict, asset_name: str) -> Optional[str]:
         """
