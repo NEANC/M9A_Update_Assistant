@@ -147,39 +147,6 @@ class GitHubReleaseClient:
         self.logger.error(f"获取指定 release (tag={v_tag}) 失败，已达到最大重试次数")
         return None
 
-    def parse_release_keywords(self, release_info: Dict) -> Dict[str, Any]:
-        """
-        解析 release 的 body 字段，提取 CLI 和 GUI 版本的关键词
-
-        Args:
-            release_info: GitHub release 信息
-
-        Returns:
-            Dict: 包含 'cli'、'gui' 和 'gui_keywords' 的字典
-        """
-        body = release_info.get('body', '')
-        if not body:
-            self.logger.warning("Github API: release body 为空，使用默认关键词")
-            return {'cli': 'Lite', 'gui': 'Full', 'gui_keywords': ['Full']}
-
-        cli_keywords = re.findall(r'(\w+)\s*=\s*命令行版', body)
-        gui_keywords = re.findall(r'(\w+)\s*=\s*图形界面版', body)
-
-        cli_keyword = cli_keywords[-1] if cli_keywords else 'Lite'
-        gui_keyword = gui_keywords[-1] if gui_keywords else 'Full'
-
-        if gui_keywords:
-            gui_versions_str = ', '.join(gui_keywords)
-            self.logger.debug(f"从 Github API 中提取关键词: 命令行版={cli_keyword}, 图形界面版=[{gui_versions_str}]")
-        else:
-            self.logger.debug(f"从 Github API 中提取关键词: 命令行版={cli_keyword}, 图形界面版={gui_keyword}")
-
-        return {
-            'cli': cli_keyword,
-            'gui': gui_keyword,
-            'gui_keywords': gui_keywords if gui_keywords else ['Full']
-        }
-
     def find_download_url(self, release_info: Dict, pattern: str,
                            select_smallest: bool = False,
                            exclude_patterns: Optional[List[str]] = None) -> Optional[str]:
