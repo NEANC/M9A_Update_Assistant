@@ -434,7 +434,7 @@ class M9AUpdater:
         if target_version:
             for candidate in all_zips:
                 version = ZipManager.get_zip_version(str(candidate))
-                if version and version == target_version:
+                if version and _normalize_version_name(version) == _normalize_version_name(target_version):
                     self.logger.info(f"缓存 ZIP 版本 {version} 匹配: {candidate}")
                     return str(candidate)
             self.logger.warning(f"未找到版本 {target_version} 的缓存 ZIP，将重新下载")

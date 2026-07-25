@@ -450,6 +450,23 @@ class TestBackupAndRestoreConfig(unittest.TestCase):
             )
             self.assertEqual(result, str(expected))
 
+    def test_find_cli_zip_matches_version_without_v_prefix(self):
+        """缓存查找对 v 前缀差异做规范化匹配（ZIP 内无 v vs target 有 v）"""
+        from modules.github_release_client import GitHubReleaseClient
+        gh = GitHubReleaseClient('test/repo', 'release', '', self.logger)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_dir = Path(tmp) / 'ZIP'
+            zip_dir.mkdir()
+            expected = zip_dir / 'M9A-win-x86_64-v4.5.4-PiCLI.zip'
+            _create_version_zip(expected, '4.5.4')  # ZIP 内无 v 前缀
+            _create_version_zip(zip_dir / 'M9A-win-x86_64-v4.5.3-PiCLI.zip', '4.5.3')
+
+            result = self.updater.find_cli_zip(
+                'M9A-win-x86_64-v*.zip', tmp, gh, 'v4.5.4',  # target 带 v 前缀
+            )
+            self.assertEqual(result, str(expected))
+
     def test_find_cli_zip_ignores_other_platforms(self):
         """缓存查找不匹配其他系统或架构"""
         from modules.github_release_client import GitHubReleaseClient
