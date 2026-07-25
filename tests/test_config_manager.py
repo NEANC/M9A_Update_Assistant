@@ -262,6 +262,86 @@ self_update_channel = stable
         self.assertFalse(hasattr(cm, 'gui_zip_pattern'))
         self.assertEqual(cm.cli_zip_pattern, 'M9A-win-x86_64-v*.zip')
 
+    def _read_config_value(self, path: str, section: str, key: str) -> str:
+        """读取配置文件中的指定值。"""
+        parser = configparser.ConfigParser(strict=False)
+        parser.read(path, encoding='utf-8')
+        return parser.get(section, key)
+
+    def test_download_threads_default_is_added(self):
+        """缺失 download_threads 时自动补入默认值 4。"""
+        content = r"""[Paths]
+m9a_folders = Z:\M9A
+
+[Logs]
+save_enabled = false
+max_files = 5
+
+[GitHub]
+repo = custom/repo
+m9a_update_channel = preview
+proxy =
+
+[SelfUpdate]
+enabled = true
+self_update_channel = stable
+"""
+        path = self._make_config(content)
+        try:
+            cm = ConfigManager(path, self.logger)
+            cm.load()
+            self.assertEqual(cm.download_threads, 4)
+            self.assertEqual(self._read_config_value(path, 'GitHub', 'download_threads'), '4')
+        finally:
+            os.unlink(path)
+
+    def test_download_threads_empty_uses_default_and_rewrites(self):
+        """空 download_threads 回写默认值 4。"""
+        content = r"""[Paths]
+m9a_folders = Z:\M9A
+[GitHub]
+repo = custom/repo
+download_threads =
+"""
+        path = self._make_config(content)
+        try:
+            cm = ConfigManager(path, self.logger)
+            cm.load()
+            self.assertEqual(cm.download_threads, 4)
+            self.assertEqual(self._read_config_value(path, 'GitHub', 'download_threads'), '4')
+        finally:
+            os.unlink(path)
+
+    def test_download_threads_valid_values(self):
+        """纯数字线程数按规则保留或钳制。"""
+        cases = [('0', 0, '0'), ('1', 1, '1'), ('2', 2, '2'), ('4', 4, '4'), ('32', 32, '32'), ('33', 32, '32')]
+        for raw, expected_attr, expected_file in cases:
+            with self.subTest(raw=raw):
+                content = f"[Paths]\nm9a_folders = Z:\\M9A\n[GitHub]\nrepo = custom/repo\ndownload_threads = {raw}\n"
+                path = self._make_config(content)
+                try:
+                    cm = ConfigManager(path, self.logger)
+                    cm.load()
+                    self.assertEqual(cm.download_threads, expected_attr)
+                    self.assertEqual(self._read_config_value(path, 'GitHub', 'download_threads'), expected_file)
+                finally:
+                    os.unlink(path)
+
+    def test_download_threads_invalid_values_use_default(self):
+        """任意非纯数字线程数回写默认值 4。"""
+        invalid_values = ['+2', '-1', '2+', '4*', '5/', 'abc', '2abc4', 'v16beta2', '1-2', '2*3', '4 threads']
+        for raw in invalid_values:
+            with self.subTest(raw=raw):
+                content = f"[Paths]\nm9a_folders = Z:\\M9A\n[GitHub]\nrepo = custom/repo\ndownload_threads = {raw}\n"
+                path = self._make_config(content)
+                try:
+                    cm = ConfigManager(path, self.logger)
+                    cm.load()
+                    self.assertEqual(cm.download_threads, 4)
+                    self.assertEqual(self._read_config_value(path, 'GitHub', 'download_threads'), '4')
+                finally:
+                    os.unlink(path)
+
 
 if __name__ == '__main__':
     unittest.main()
