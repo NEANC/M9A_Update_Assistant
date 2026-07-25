@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
+import configparser
 import logging
 import os
 import sys
@@ -65,7 +66,7 @@ proxy = http://127.0.0.1:7890
             self.assertEqual(cm.m9a_folders, [r'Z:\M9A', r'Z:\M9A2'])
             self.assertTrue(cm.log_save_enabled)
             self.assertEqual(cm.log_max_files, 10)
-            self.assertEqual(cm.github_repo, 'MAA1999/M9A')
+            self.assertEqual(cm.github_repo, 'MAA1999/m9a-cli')
             self.assertEqual(cm.github_release_version, 'preview')
             self.assertEqual(cm.github_proxy, 'http://127.0.0.1:7890')
         finally:
@@ -102,7 +103,7 @@ m9a_folders =
             cm = ConfigManager(path, self.logger)
             self.assertEqual(cm.archive_folder_path, '存档文件夹')
             self.assertEqual(cm.log_max_files, 5)
-            self.assertEqual(cm.github_repo, 'MAA1999/M9A')
+            self.assertEqual(cm.github_repo, 'MAA1999/m9a-cli')
             self.assertEqual(cm.github_release_version, 'preview')
             self.assertEqual(cm.github_proxy, '')
             self.assertTrue(cm.self_update_enabled)
@@ -189,6 +190,76 @@ repo = test/repo
             self.assertEqual(cm.archive_folder_path, '存档文件夹')
         finally:
             os.unlink(path)
+
+
+    def test_default_repo_is_m9a_cli(self):
+        """测试默认 GitHub 仓库指向 CLI 仓库"""
+        self.assertEqual(
+            ConfigManager.DEFAULT_SECTIONS['GitHub']['repo'],
+            'MAA1999/m9a-cli',
+        )
+
+    def test_old_default_repo_migrates_to_cli_repo(self):
+        """测试旧默认仓库自动迁移到 CLI 仓库"""
+        content = r"""[Paths]
+m9a_folders = Z:\M9A
+
+[Logs]
+save_enabled = false
+max_files = 5
+
+[GitHub]
+repo = MAA1999/M9A
+m9a_update_channel = preview
+proxy =
+
+[SelfUpdate]
+enabled = true
+self_update_channel = stable
+"""
+        path = self._make_config(content)
+        try:
+            cm = ConfigManager(path, self.logger)
+            cm.load()
+            self.assertEqual(cm.github_repo, 'MAA1999/m9a-cli')
+
+            parser = configparser.ConfigParser(strict=False)
+            parser.read(path, encoding='utf-8')
+            self.assertEqual(parser.get('GitHub', 'repo'), 'MAA1999/m9a-cli')
+        finally:
+            os.unlink(path)
+
+    def test_custom_repo_is_not_migrated(self):
+        """测试自定义仓库不会被迁移覆盖"""
+        content = r"""[Paths]
+m9a_folders = Z:\M9A
+
+[Logs]
+save_enabled = false
+max_files = 5
+
+[GitHub]
+repo = custom/repo
+m9a_update_channel = preview
+proxy =
+
+[SelfUpdate]
+enabled = true
+self_update_channel = stable
+"""
+        path = self._make_config(content)
+        try:
+            cm = ConfigManager(path, self.logger)
+            cm.load()
+            self.assertEqual(cm.github_repo, 'custom/repo')
+        finally:
+            os.unlink(path)
+
+    def test_gui_zip_pattern_removed_from_config_manager(self):
+        """测试 ConfigManager 不再暴露 GUI ZIP 匹配属性"""
+        cm = ConfigManager('config.ini', self.logger)
+        self.assertFalse(hasattr(cm, 'gui_zip_pattern'))
+        self.assertEqual(cm.cli_zip_pattern, 'M9A-win-x86_64-v*.zip')
 
 
 if __name__ == '__main__':
