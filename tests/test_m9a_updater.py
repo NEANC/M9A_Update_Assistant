@@ -502,7 +502,7 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
         assistant._zip.extract_zip_with_progress.return_value = True
         assistant._updater = Mock()
         assistant._updater.archive_dir = Path(archive_dir)
-        assistant._updater.find_lite_zip.return_value = None
+        assistant._updater.find_cli_zip.return_value = None
         assistant._updater.backup_config.return_value = current_version
         assistant._updater.clean_m9a_folder.return_value = True
         assistant._updater.restore_config.return_value = True
@@ -525,14 +525,14 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
             from M9A_Update_Assistant import M9AUpdateAssistant
 
             assistant._download_latest_release = M9AUpdateAssistant._download_latest_release.__get__(assistant)
-            assistant._updater.find_lite_zip.return_value = None
+            assistant._updater.find_cli_zip.return_value = None
 
             result = assistant.run_update('v4.5.3')
 
             self.assertFalse(result)
             self.assertEqual(assistant._github.find_download_url.call_count, 1)
             assistant._download.download_file_with_progress.assert_not_called()
-            self.assertEqual(assistant._updater.find_lite_zip.call_count, 1)
+            self.assertEqual(assistant._updater.find_cli_zip.call_count, 1)
 
     def test_downgrade_uses_target_backup_when_exists(self):
         """实际降级且目标备份存在时，回写目标版本配置"""
@@ -591,6 +591,81 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
 
             self.assertTrue(result)
             assistant._updater.restore_config.assert_called_once_with(str(m9a_folder), 'v3.19.0')
+
+
+class TestDownloadLatestReleaseCliOnly(unittest.TestCase):
+    """_download_latest_release CLI-only 流程测试"""
+
+    def _create_assistant(self):
+        """创建只包含下载流程依赖的助手实例"""
+        from M9A_Update_Assistant import M9AUpdateAssistant
+
+        assistant = object.__new__(M9AUpdateAssistant)
+        assistant.logger = logging.getLogger("TestDownloadLatestRelease")
+        assistant.logger.setLevel(logging.CRITICAL)
+        assistant.config = SimpleNamespace(
+            cli_zip_pattern='M9A-win-x86_64-v*.zip',
+            temp_folder=tempfile.mkdtemp(),
+        )
+        assistant._github = Mock()
+        assistant._download = Mock()
+        assistant._zip = Mock()
+        assistant._zip.verify_zip_integrity.return_value = True
+        return assistant
+
+    def test_download_latest_release_uses_cli_only_pattern(self):
+        """只查找并下载 Windows x86_64 CLI ZIP"""
+        assistant = self._create_assistant()
+        release = {
+            'tag_name': 'v4.5.4',
+            'assets': [
+                {'name': 'M9A-linux-x86_64-v4.5.4-PiCLI.zip', 'browser_download_url': 'https://url/linux'},
+                {'name': 'M9A-win-x86_64-v4.5.4-PiCLI.zip', 'browser_download_url': 'https://url/win'},
+            ],
+        }
+        assistant._github.find_download_url.return_value = 'https://url/win/M9A-win-x86_64-v4.5.4-PiCLI.zip'
+        assistant._download.download_file_with_progress.return_value = True
+
+        from M9A_Update_Assistant import M9AUpdateAssistant
+        assistant._check_or_download_zip = Mock(return_value='C:/cache/M9A-win-x86_64-v4.5.4-PiCLI.zip')
+
+        result = M9AUpdateAssistant._download_latest_release(assistant, release)
+
+        self.assertEqual(result['files'], ['C:/cache/M9A-win-x86_64-v4.5.4-PiCLI.zip'])
+        self.assertEqual(result['version'], 'v4.5.4')
+        self.assertNotIn('cli_keyword', result)
+        self.assertNotIn('gui_keyword', result)
+        self.assertNotIn('cli_has_deps', result)
+        assistant._github.find_download_url.assert_called_once_with(
+            release, 'M9A-win-x86_64-v*.zip',
+        )
+
+    def test_missing_cli_zip_returns_error(self):
+        """找不到 Windows x86_64 CLI ZIP 时返回缺失错误"""
+        assistant = self._create_assistant()
+        release = {'tag_name': 'v4.5.4', 'assets': []}
+        assistant._github.find_download_url.return_value = None
+
+        from M9A_Update_Assistant import M9AUpdateAssistant
+        result = M9AUpdateAssistant._download_latest_release(assistant, release)
+
+        self.assertEqual(result, {'error': 'missing_cli_zip'})
+        assistant._download.download_file_with_progress.assert_not_called()
+
+    def test_cached_cli_is_used_without_download_url(self):
+        """传入有效缓存时可直接使用缓存 ZIP"""
+        assistant = self._create_assistant()
+        release = {'tag_name': 'v4.5.4', 'assets': []}
+        assistant._github.find_download_url.return_value = None
+        assistant._zip.verify_zip_integrity.return_value = True
+
+        from M9A_Update_Assistant import M9AUpdateAssistant
+        result = M9AUpdateAssistant._download_latest_release(
+            assistant, release, cached_cli='C:/cache/M9A-win-x86_64-v4.5.4-PiCLI.zip',
+        )
+
+        self.assertEqual(result['files'], ['C:/cache/M9A-win-x86_64-v4.5.4-PiCLI.zip'])
+        assistant._download.download_file_with_progress.assert_not_called()
 
 
 if __name__ == '__main__':
