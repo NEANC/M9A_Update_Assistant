@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
+import zipfile
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -343,6 +344,12 @@ class TestCleanTempFolder(unittest.TestCase):
         self.assertFalse(result)
 
 
+def _create_version_zip(zip_path: Path, version: str) -> None:
+    """创建包含 interface.json 的测试 ZIP"""
+    with zipfile.ZipFile(zip_path, 'w') as zf:
+        zf.writestr('interface.json', json.dumps({'version': version}))
+
+
 class TestBackupAndRestoreConfig(unittest.TestCase):
     """backup_config 与 restore_config 集成测试"""
 
@@ -414,14 +421,48 @@ class TestBackupAndRestoreConfig(unittest.TestCase):
         result = self.updater.backup_config(m9a_folder, '')
         self.assertFalse(result)
 
-    def test_find_lite_zip_not_found(self):
+    def test_find_cli_zip_not_found(self):
         """查找不存在的 CLI ZIP"""
         from modules.github_release_client import GitHubReleaseClient
         gh = GitHubReleaseClient('test/repo', 'release', '', self.logger)
 
         with tempfile.TemporaryDirectory() as tmp:
-            result = self.updater.find_lite_zip(
-                'M9A-win-x86_64-v*-Lite.zip', tmp, gh,
+            result = self.updater.find_cli_zip(
+                'M9A-win-x86_64-v*.zip', tmp, gh,
+            )
+            self.assertIsNone(result)
+
+    def test_find_cli_zip_matches_target_version_without_suffix_filter(self):
+        """缓存查找按 ZIP 内版本匹配，不依赖文件名后缀"""
+        from modules.github_release_client import GitHubReleaseClient
+        gh = GitHubReleaseClient('test/repo', 'release', '', self.logger)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_dir = Path(tmp) / 'ZIP'
+            zip_dir.mkdir()
+            expected = zip_dir / 'M9A-win-x86_64-v4.5.4-PiCLI.zip'
+            other = zip_dir / 'M9A-win-x86_64-v4.5.3-Lite.zip'
+            _create_version_zip(expected, 'v4.5.4')
+            _create_version_zip(other, 'v4.5.3')
+
+            result = self.updater.find_cli_zip(
+                'M9A-win-x86_64-v*.zip', tmp, gh, 'v4.5.4',
+            )
+            self.assertEqual(result, str(expected))
+
+    def test_find_cli_zip_ignores_other_platforms(self):
+        """缓存查找不匹配其他系统或架构"""
+        from modules.github_release_client import GitHubReleaseClient
+        gh = GitHubReleaseClient('test/repo', 'release', '', self.logger)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_dir = Path(tmp) / 'ZIP'
+            zip_dir.mkdir()
+            _create_version_zip(zip_dir / 'M9A-linux-x86_64-v4.5.4-PiCLI.zip', 'v4.5.4')
+            _create_version_zip(zip_dir / 'M9A-win-arm64-v4.5.4-PiCLI.zip', 'v4.5.4')
+
+            result = self.updater.find_cli_zip(
+                'M9A-win-x86_64-v*.zip', tmp, gh, 'v4.5.4',
             )
             self.assertIsNone(result)
 
