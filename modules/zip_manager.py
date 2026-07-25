@@ -18,7 +18,7 @@ from modules.progress_bar import (
 
 
 class ZipManager:
-    """ZIP 管理器，负责 ZIP 校验、解压、deps 提取、SHA256 计算与校验"""
+    """ZIP 管理器，负责 ZIP 校验、解压、SHA256 计算与校验"""
 
     def __init__(self, logger: logging.Logger):
         """
@@ -183,28 +183,6 @@ class ZipManager:
             print(format_error("解压", str(e)))
             return False
 
-    def check_lite_zip_has_deps(self, zip_path: str) -> bool:
-        """
-        检查 CLI ZIP 文件中是否包含 deps 文件夹
-
-        Args:
-            zip_path: CLI ZIP 文件路径
-
-        Returns:
-            bool: 是否包含 deps 文件夹
-        """
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                for file_name in zip_ref.namelist():
-                    if file_name.startswith('deps/'):
-                        self.logger.info("CLI ZIP 文件中存在 deps 文件夹")
-                        return True
-                self.logger.warning("CLI ZIP 文件中不包含 deps 文件夹")
-                return False
-        except (zipfile.BadZipFile, IOError, OSError) as e:
-            self.logger.error(f"检查 CLI ZIP 文件失败: {e}")
-            return False
-
     @staticmethod
     def get_zip_version(zip_path: str) -> Optional[str]:
         """
@@ -228,78 +206,3 @@ class ZipManager:
         except Exception:
             return None
 
-    def extract_deps_from_full_zip(self, gui_zip_file: str, m9a_folder: str,
-                                    gui_zip_pattern: str,
-                                    temp_folder: str,
-                                    m9a_folders: list,
-                                    gh_client: GitHubReleaseClient = None) -> bool:
-        """
-        从 GUI ZIP 文件中提取 deps 文件夹到 M9A 文件夹
-
-        Args:
-            gui_zip_file: GUI ZIP 文件路径
-            m9a_folder: M9A 文件夹路径
-            gui_zip_pattern: GUI ZIP 匹配模式
-            temp_folder: 临时文件夹
-            m9a_folders: M9A 文件夹列表
-            gh_client: GitHub Release 客户端
-
-        Returns:
-            操作是否成功
-        """
-        if gui_zip_file and os.path.exists(gui_zip_file):
-            gui_zip_path = Path(gui_zip_file)
-        else:
-            gui_zip_regex = gh_client.compile_pattern(gui_zip_pattern)
-            search_dirs = [Path(temp_folder), Path.cwd()]
-            gui_zip_files = []
-
-            for search_dir in search_dirs:
-                if search_dir.exists():
-                    gui_zip_files.extend([f for f in search_dir.glob('M9A-win-x86_64-v*-*.zip')
-                                          if gui_zip_regex.match(f.name)])
-
-            if not gui_zip_files:
-                self.logger.warning(f"未找到匹配的 GUI ZIP 文件: {gui_zip_pattern}")
-                return False
-
-            gui_zip_path = gui_zip_files[0]
-
-        self.logger.info(f"GUI ZIP 文件: {gui_zip_path}")
-
-        try:
-            m9a_path = Path(m9a_folder) if m9a_folder else Path(m9a_folders[0])
-            m9a_path.mkdir(parents=True, exist_ok=True)
-
-            with zipfile.ZipFile(gui_zip_path, 'r') as zip_ref:
-                deps_files = [f for f in zip_ref.namelist() if f.startswith('deps/')]
-
-                if not deps_files:
-                    self.logger.critical(f"未找到 deps 文件夹: {gui_zip_path}")
-                    return False
-
-                total_size = sum(zip_ref.getinfo(f).file_size for f in deps_files)
-
-                self.logger.info(f"开始提取 deps 文件夹: {len(deps_files)} 个文件, "
-                                f"总大小: {total_size / (1024 * 1024):.2f} MB")
-
-                with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
-                           desc="提取 deps ", bar_format=BAR_FORMAT, leave=False) as pbar:
-                    try:
-                        for file_name in deps_files:
-                            file_info = zip_ref.getinfo(file_name)
-                            zip_ref.extract(file_info, m9a_path)
-                            pbar.update(file_info.file_size)
-                    except Exception:
-                        pbar.leave = True  # 错误时保留进度条
-                        raise
-
-            # ── 完成提示（亮绿色） ──
-            print(format_ok("提取 deps ", gui_zip_path.name, str(m9a_path), total_size))
-
-            self.logger.debug(f"deps 文件夹已提取到: {m9a_path}")
-            return True
-        except (zipfile.BadZipFile, IOError, OSError) as e:
-            self.logger.error(f"提取 deps 文件夹失败: {e}")
-            print(format_error("提取 deps ", str(e)))
-            return False
