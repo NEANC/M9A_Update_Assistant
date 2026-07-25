@@ -480,25 +480,19 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
         assistant.keep_temp = True
         assistant._cleanup_old_logs = Mock()
         assistant.config = SimpleNamespace(
-            cli_zip_pattern='M9A-win-x86_64-v*-Lite.zip',
+            cli_zip_pattern='M9A-win-x86_64-v*.zip',
             temp_folder='temp',
-            gui_zip_pattern='M9A-win-x86_64-v*-Full.zip',
             m9a_folders=[str(m9a_folder)],
         )
         assistant._github = Mock()
         assistant._github.get_release_by_tag.return_value = {'tag_name': target_version}
-        assistant._github.parse_release_keywords.return_value = {'cli': 'Lite', 'gui': 'Full'}
         assistant._collect_outdated_folders = Mock(return_value=[str(m9a_folder)])
         assistant._download_latest_release = Mock(return_value={
-            'files': ['C:/cache/M9A-win-x86_64-v3-Lite.zip'],
-            'cli_keyword': 'Lite',
-            'gui_keyword': 'Full',
+            'files': ['C:/cache/M9A-win-x86_64-v3-PiCLI.zip'],
             'version': target_version,
-            'cli_has_deps': True,
         })
         assistant._download = Mock()
         assistant._zip = Mock()
-        assistant._zip.check_lite_zip_has_deps.return_value = True
         assistant._zip.extract_zip_with_progress.return_value = True
         assistant._updater = Mock()
         assistant._updater.archive_dir = Path(archive_dir)
@@ -507,6 +501,21 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
         assistant._updater.clean_m9a_folder.return_value = True
         assistant._updater.restore_config.return_value = True
         return assistant
+
+    def test_run_update_does_not_use_removed_deps_methods(self):
+        """run_update 不调用 GUI 或 deps 相关方法"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / 'archive'
+            m9a_folder = Path(tmp) / 'M9A'
+            m9a_folder.mkdir()
+            assistant = self._create_assistant(archive, 'v3.19.0', 'v3.20.0', m9a_folder)
+
+            result = assistant.run_update('v3.20.0')
+
+            self.assertTrue(result)
+            assistant._updater.find_cli_zip.assert_called_once_with(
+                'M9A-win-x86_64-v*.zip', 'temp', assistant._github, 'v3.20.0',
+            )
 
     def test_missing_cli_zip_stops_during_release_download(self):
         """找不到目标版本 CLI ZIP 时，在资源解析阶段终止"""
@@ -520,8 +529,7 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
                     {'name': 'M9A-win-x86_64-v4.5.3-MXU.zip', 'browser_download_url': 'https://url/mxu'},
                 ],
             }
-            assistant._github.parse_release_keywords.return_value = {'cli': 'Lite', 'gui_keywords': ['MFAA', 'MXU']}
-            assistant._github.find_download_url.side_effect = ['', 'https://url/mxu']
+            assistant._github.find_download_url.return_value = None
             from M9A_Update_Assistant import M9AUpdateAssistant
 
             assistant._download_latest_release = M9AUpdateAssistant._download_latest_release.__get__(assistant)
@@ -530,7 +538,12 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
             result = assistant.run_update('v4.5.3')
 
             self.assertFalse(result)
-            self.assertEqual(assistant._github.find_download_url.call_count, 1)
+            assistant._github.find_download_url.assert_called_once_with(
+                {'tag_name': 'v4.5.3', 'assets': [
+                    {'name': 'M9A-win-x86_64-v4.5.3-MXU.zip', 'browser_download_url': 'https://url/mxu'},
+                ]},
+                'M9A-win-x86_64-v*.zip',
+            )
             assistant._download.download_file_with_progress.assert_not_called()
             self.assertEqual(assistant._updater.find_cli_zip.call_count, 1)
 
