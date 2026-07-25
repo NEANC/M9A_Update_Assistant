@@ -314,10 +314,6 @@ class M9AUpdateAssistant:
 
         self.logger.info(f"使用 CLI ZIP 文件: {cli_zip}")
 
-        cli_has_deps = self._zip.check_lite_zip_has_deps(cli_zip)
-        if cli_has_deps:
-            self.logger.info("CLI ZIP 已包含 deps 文件夹，跳过 deps 提取")
-
         all_success = True
         for index, m9a_folder in enumerate(outdated_folders, 1):
             self.logger.info(f"开始更新第 {index}/{len(outdated_folders)} 个 M9A: {m9a_folder}")
