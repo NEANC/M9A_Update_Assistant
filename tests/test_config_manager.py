@@ -101,6 +101,7 @@ m9a_folders =
         path = self._make_config(content)
         try:
             cm = ConfigManager(path, self.logger)
+            cm.load()
             self.assertEqual(cm.archive_folder_path, '存档文件夹')
             self.assertEqual(cm.log_max_files, 5)
             self.assertEqual(cm.github_repo, 'MAA1999/m9a-cli')
