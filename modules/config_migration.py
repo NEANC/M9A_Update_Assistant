@@ -62,6 +62,16 @@ MIGRATIONS = [
         'new_value': 'stable',
         'description': 'GitHub m9a_update_channel: latest → stable',
     },
+    {
+        'id': 7,
+        'type': 'rename_value',
+        'section': 'GitHub',
+        'key': 'repo',
+        'old_value': 'MAA1999/M9A',
+        'new_value': 'MAA1999/m9a-cli',
+        'description': 'GitHub repo: MAA1999/M9A → MAA1999/m9a-cli',
+        'level': 'warning',
+    },
 ]
 
 def _apply_rename_key(config: configparser.ConfigParser,
@@ -116,15 +126,22 @@ def apply_migrations(config: configparser.ConfigParser,
         try:
             handler = MIGRATION_HANDLERS[migration['type']]
             kwargs = {k: v for k, v in migration.items()
-                      if k not in ('id', 'type', 'description')}
+                      if k not in ('id', 'type', 'description', 'level')}
             if not handler(config, **kwargs):
                 continue
             desc = migration.get('description', f'#{mid}')
-            logger.info(f"检测到需要迁移 [{mid}]: {desc}")
+            log_level = migration.get('level', 'info')
+            if log_level == 'warning':
+                logger.warning(f"检测到需要迁移 [{mid}]: {desc}")
+            else:
+                logger.info(f"检测到需要迁移 [{mid}]: {desc}")
             _mark_applied(config, mid)
             applied.add(mid)
             changed = True
-            logger.info(f"配置迁移 [{mid}] 完成")
+            if log_level == 'warning':
+                logger.warning(f"配置迁移 [{mid}] 完成")
+            else:
+                logger.info(f"配置迁移 [{mid}] 完成")
         except Exception as e:
             logger.warning(f"配置迁移 [{mid}] 失败: {e}")
 

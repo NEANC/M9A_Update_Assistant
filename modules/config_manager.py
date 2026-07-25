@@ -65,7 +65,7 @@ class ConfigManager:
             'max_files': '5',
         },
         'GitHub': {
-            'repo': 'MAA1999/M9A',
+            'repo': 'MAA1999/m9a-cli',
             'proxy': '',
             'm9a_update_channel': 'preview',
         },
@@ -118,11 +118,10 @@ class ConfigManager:
         self.m9a_folders: List[str] = []
         self.temp_folder = ''
         self.archive_folder_path = '存档文件夹'
-        self.cli_zip_pattern = 'M9A-win-x86_64-v*-Lite.zip'
-        self.gui_zip_pattern = 'M9A-win-x86_64-v*-Full.zip'
+        self.cli_zip_pattern = 'M9A-win-x86_64-v*.zip'
         self.log_max_files = 5
         self.log_save_enabled = False
-        self.github_repo = 'MAA1999/M9A'
+        self.github_repo = 'MAA1999/m9a-cli'
         self.github_release_version = 'preview'
         self.github_proxy = ''
         self.self_update_enabled = True
@@ -367,7 +366,7 @@ class ConfigManager:
         self.log_max_files = self.config.getint('Logs', 'max_files', fallback=5)
         self.log_save_enabled = self.config.getboolean('Logs', 'save_enabled', fallback=True)
 
-        self.github_repo = self.config.get('GitHub', 'repo', fallback='MAA1999/M9A')
+        self.github_repo = self.config.get('GitHub', 'repo', fallback='MAA1999/m9a-cli')
         self.github_release_version = self.config.get('GitHub', 'm9a_update_channel', fallback='preview')
         self.github_proxy = self.config.get('GitHub', 'proxy', fallback='').strip()
         self.self_update_enabled = self.config.getboolean('SelfUpdate', 'enabled', fallback=True)
