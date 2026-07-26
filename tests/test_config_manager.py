@@ -314,7 +314,7 @@ download_threads =
 
     def test_download_threads_valid_values(self):
         """纯数字线程数按规则保留或钳制。"""
-        cases = [('0', 0, '0'), ('1', 1, '1'), ('2', 2, '2'), ('4', 4, '4'), ('32', 32, '32'), ('33', 32, '32')]
+        cases = [('0', 1, '1'), ('1', 1, '1'), ('2', 2, '2'), ('4', 4, '4'), ('32', 32, '32'), ('33', 32, '32')]
         for raw, expected_attr, expected_file in cases:
             with self.subTest(raw=raw):
                 content = f"[Paths]\nm9a_folders = Z:\\M9A\n[GitHub]\nrepo = custom/repo\ndownload_threads = {raw}\n"

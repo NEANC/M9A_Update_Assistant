@@ -54,7 +54,7 @@ class TestDownloadFile(unittest.TestCase):
 
     @mock.patch('modules.download_manager.Pypdl')
     def test_single_thread_parameters(self, mock_pypdl_class):
-        """0 和 1 线程请求 Pypdl 单段下载。"""
+        """1 线程请求 Pypdl 单段下载。0 已在配置解析层钳制为 1。"""
         mock_downloader = mock.MagicMock()
         mock_downloader.failed = []
         mock_pypdl_class.return_value = mock_downloader
@@ -162,6 +162,62 @@ class TestDownloadFile(unittest.TestCase):
         """文件下载适配层不再导入 requests。"""
         import modules.download_manager as download_manager
         self.assertFalse(hasattr(download_manager, 'requests'))
+
+    @mock.patch('modules.download_manager.Pypdl')
+    def test_pypdl_failed_empty_list_is_success(self, mock_pypdl_class):
+        """Pypdl completed with failed=[] (never failed) 视为成功。"""
+        mock_downloader = mock.MagicMock()
+        mock_downloader.failed = []
+        mock_pypdl_class.return_value = mock_downloader
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
+            path = f.name
+        try:
+            os.unlink(path)
+            mock_downloader.start.side_effect = lambda *args, **kwargs: Path(path).write_bytes(b'data') or True
+            result = self.dm.download_file_with_progress('https://example.com/file.bin', path)
+            self.assertTrue(result)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    @mock.patch('modules.download_manager.Pypdl')
+    def test_pypdl_failed_is_none_is_success(self, mock_pypdl_class):
+        """Pypdl completed with failed=None 视为成功。"""
+        mock_downloader = mock.MagicMock()
+        mock_downloader.failed = None
+        mock_pypdl_class.return_value = mock_downloader
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
+            path = f.name
+        try:
+            os.unlink(path)
+            mock_downloader.start.side_effect = lambda *args, **kwargs: Path(path).write_bytes(b'data') or True
+            result = self.dm.download_file_with_progress('https://example.com/file.bin', path)
+            self.assertTrue(result)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    @mock.patch('modules.download_manager.Pypdl')
+    def test_pypdl_no_failed_attr_is_success(self, mock_pypdl_class):
+        """Pypdl completed but failed 属性不存在时视为成功。"""
+        mock_downloader = mock.MagicMock(spec=['start'])  # 仅暴露 start，failed 不存在
+        mock_pypdl_class.return_value = mock_downloader
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
+            path = f.name
+        try:
+            os.unlink(path)
+            mock_downloader.start.side_effect = lambda *args, **kwargs: Path(path).write_bytes(b'data') or True
+            result = self.dm.download_file_with_progress('https://example.com/file.bin', path)
+            self.assertTrue(result)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
 
 
 if __name__ == '__main__':

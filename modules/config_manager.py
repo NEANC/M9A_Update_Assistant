@@ -79,6 +79,10 @@ def parse_download_threads(value: str, logger: logging.Logger = None,
         return DOWNLOAD_THREADS_DEFAULT, True
 
     threads = int(raw_value)
+    if threads == 0:
+        if logger:
+            logger.warning(f"{source} download_threads 为 0，已钳制为单线程(1)")
+        return 1, True
     if threads > DOWNLOAD_THREADS_MAX:
         if logger:
             logger.warning(f"{source} download_threads 超过上限 {DOWNLOAD_THREADS_MAX}: {threads}，已钳制")
@@ -121,7 +125,7 @@ class ConfigManager:
         'GitHub.repo': 'GitHub 仓库地址（格式：用户名/仓库名）',
         'GitHub.proxy': '代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080），留空表示不使用代理',
         'GitHub.m9a_update_channel': 'M9A 更新通道\npreview: 包括预发布版本 (Alpha/Beta/RC)\nstable: 仅正式发布版本',
-        'GitHub.download_threads': '下载线程数，默认 4；0、1 表示单线程；2 到 32 表示多分段下载；只接受纯数字',
+        'GitHub.download_threads': '下载线程数，默认 4；1 表示单线程，0 自动钳制为 1；2 到 32 表示多分段下载；只接受纯数字',
         'SelfUpdate.enabled': '是否启用软件自我更新',
         'SelfUpdate.self_update_channel': '自我更新版本通道\npreview: 包括预发布版本 (Alpha/Beta/RC)\nstable: 仅正式发布版本',
     }
