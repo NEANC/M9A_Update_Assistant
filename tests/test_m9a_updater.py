@@ -755,5 +755,44 @@ class TestParseCommandLineArgs(unittest.TestCase):
         self.assertEqual(args.threads, '4')
 
 
+class TestCheckOrDownloadZipCandidateName(unittest.TestCase):
+    """_check_or_download_zip 使用 candidate.name 而非 zip_filename 做缓存校验"""
+
+    def test_verify_called_with_candidate_name_not_zip_filename(self):
+        """缓存校验传入 candidate.name，不传入外部传入的 zip_filename。"""
+        from M9A_Update_Assistant import M9AUpdateAssistant
+
+        with tempfile.TemporaryDirectory() as tmp:
+            download_dir = Path(tmp) / 'ZIP'
+            download_dir.mkdir()
+            cand_name = 'M9A-win-x86_64-v4.5.4-PiCLI.zip'
+            candidate = download_dir / cand_name
+            _create_version_zip(candidate, 'v4.5.4')
+
+            url = 'https://example.com/M9A-win-x86_64-v4.5.4-diff-name-PiCLI.zip'
+            save_path = download_dir / 'M9A-win-x86_64-v4.5.4-diff-name-PiCLI.zip'
+            release_info = {'tag_name': 'v4.5.4'}
+            zip_filename = 'M9A-win-x86_64-v4.5.4-diff-name-PiCLI.zip'
+
+            assist = object.__new__(M9AUpdateAssistant)
+            assist.logger = logging.getLogger("TestCandidateName")
+            assist.logger.setLevel(logging.CRITICAL)
+            assist.config = SimpleNamespace(cli_zip_pattern='M9A-win-x86_64-v*.zip')
+            assist._download = Mock()
+            assist._download.download_file_with_progress.return_value = True
+            assist._github = Mock()
+            assist._zip = Mock()
+            assist._zip.verify_zip_integrity.return_value = True
+
+            result = assist._check_or_download_zip(
+                url, save_path, release_info, zip_filename, download_dir, 'v4.5.4',
+            )
+            self.assertEqual(result, str(candidate))
+            # 关键断言：verify_zip_integrity 被调用时传入的是 candidate.name，而不是 zip_filename
+            assist._zip.verify_zip_integrity.assert_called_with(
+                str(candidate), release_info, cand_name, assist._github,
+            )
+
+
 if __name__ == '__main__':
     unittest.main()

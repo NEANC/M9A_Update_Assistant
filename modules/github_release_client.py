@@ -161,6 +161,7 @@ class GitHubReleaseClient:
         assets = release_info.get('assets', [])
         rx = self.compile_pattern(pattern)
 
+        # 返回第一个匹配的资产。每个 release 应保证只有一个符合 pattern 的 CLI ZIP。
         for asset in assets:
             asset_name = asset.get('name', '')
             if rx.match(asset_name):
