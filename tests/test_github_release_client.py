@@ -16,27 +16,28 @@ class TestCompilePattern(unittest.TestCase):
 
     def test_basic_pattern(self):
         """基本通配符匹配"""
-        rx = GitHubReleaseClient.compile_pattern('M9A-win-x86_64-v*-Lite.zip')
-        self.assertIsNotNone(rx.match('M9A-win-x86_64-v3.28.3-Lite.zip'))
-        self.assertIsNotNone(rx.match('M9A-win-x86_64-v1.0.0-Lite.zip'))
+        rx = GitHubReleaseClient.compile_pattern('M9A-win-x86_64-v*.zip')
+        self.assertIsNotNone(rx.match('M9A-win-x86_64-v4.5.4-PiCLI.zip'))
+        self.assertIsNotNone(rx.match('M9A-win-x86_64-v3.28.3-PiCLI.zip'))
 
-    def test_pattern_not_match(self):
-        """不匹配其他版本"""
-        rx = GitHubReleaseClient.compile_pattern('M9A-win-x86_64-v*-Lite.zip')
-        self.assertIsNone(rx.match('M9A-win-x86_64-v3.28.3-PiCLI.zip'))
-        self.assertIsNone(rx.match('M9A-win-x86_64-v3.28.3-MXU.zip'))
+    def test_pattern_not_match_other_platforms(self):
+        """不匹配其他系统或架构"""
+        rx = GitHubReleaseClient.compile_pattern('M9A-win-x86_64-v*.zip')
+        self.assertIsNone(rx.match('M9A-linux-x86_64-v4.5.4-PiCLI.zip'))
+        self.assertIsNone(rx.match('M9A-macos-x86_64-v4.5.4-PiCLI.zip'))
+        self.assertIsNone(rx.match('M9A-win-arm64-v4.5.4-PiCLI.zip'))
         self.assertIsNone(rx.match('other-file.zip'))
 
     def test_anchoring(self):
         """测试正则锚定，防止部分匹配"""
-        rx = GitHubReleaseClient.compile_pattern('M9A-win-x86_64-v*-Lite.zip')
-        self.assertIsNone(rx.match('prefix_M9A-win-x86_64-v3.28.3-Lite.zip'))
-        self.assertIsNone(rx.match('M9A-win-x86_64-v3.28.3-Lite.zip_suffix'))
+        rx = GitHubReleaseClient.compile_pattern('M9A-win-x86_64-v*-PiCLI.zip')
+        self.assertIsNone(rx.match('prefix_M9A-win-x86_64-v3.28.3-PiCLI.zip'))
+        self.assertIsNone(rx.match('M9A-win-x86_64-v3.28.3-PiCLI.zip_suffix'))
 
     def test_wildcard_any_char(self):
         """* 应匹配任意字符"""
         rx = GitHubReleaseClient.compile_pattern('M9A-*-*.zip')
-        self.assertIsNotNone(rx.match('M9A-win-x86_64-v3.28.3-Lite.zip'))
+        self.assertIsNotNone(rx.match('M9A-win-x86_64-v3.28.3-PiCLI.zip'))
         self.assertIsNotNone(rx.match('M9A-abc-def.zip'))
         self.assertIsNone(rx.match('M9A.zip'))
 
@@ -59,42 +60,6 @@ class TestCompilePattern(unittest.TestCase):
         self.assertIsNone(rx.match('M9A_Update_Assistant-Nuitka.exe'))
 
 
-class TestParseReleaseKeywords(unittest.TestCase):
-    """parse_release_keywords 测试"""
-
-    def setUp(self):
-        self.logger = logging.getLogger("TestGitHub")
-        self.logger.setLevel(logging.CRITICAL)
-        self.client = GitHubReleaseClient('test/repo', 'release', '', self.logger)
-
-    def test_empty_body_defaults(self):
-        """空 body 返回默认关键词"""
-        result = self.client.parse_release_keywords({'body': ''})
-        self.assertEqual(result['cli'], 'Lite')
-        self.assertEqual(result['gui'], 'Full')
-        self.assertEqual(result['gui_keywords'], ['Full'])
-
-    def test_extract_keywords(self):
-        """正常提取关键词"""
-        body = """## 更新内容
-PiCLI = 命令行版
-MXU = 图形界面版
-MFAA = 图形界面版
-"""
-        result = self.client.parse_release_keywords({'body': body})
-        self.assertEqual(result['cli'], 'PiCLI')
-        self.assertEqual(result['gui'], 'MFAA')
-        self.assertEqual(result['gui_keywords'], ['MXU', 'MFAA'])
-
-    def test_only_cli_keyword(self):
-        """只有命令行版关键词"""
-        body = "PiCLI = 命令行版"
-        result = self.client.parse_release_keywords({'body': body})
-        self.assertEqual(result['cli'], 'PiCLI')
-        self.assertEqual(result['gui'], 'Full')
-        self.assertEqual(result['gui_keywords'], ['Full'])
-
-
 class TestFindDownloadUrl(unittest.TestCase):
     """find_download_url 测试"""
 
@@ -109,43 +74,18 @@ class TestFindDownloadUrl(unittest.TestCase):
     def test_basic_match(self):
         """基本文件匹配"""
         release = self._make_release([
-            {'name': 'M9A-win-x86_64-v3.28.3-Lite.zip', 'browser_download_url': 'https://url/lite', 'size': 100},
+            {'name': 'M9A-win-x86_64-v3.28.3-PiCLI.zip', 'browser_download_url': 'https://url/picli', 'size': 100},
         ])
-        url = self.client.find_download_url(release, 'M9A-win-x86_64-v*-Lite.zip')
-        self.assertEqual(url, 'https://url/lite')
+        url = self.client.find_download_url(release, 'M9A-win-x86_64-v*-PiCLI.zip')
+        self.assertEqual(url, 'https://url/picli')
 
     def test_no_match(self):
         """无匹配文件"""
         release = self._make_release([
             {'name': 'other-file.txt', 'browser_download_url': 'https://url/other', 'size': 100},
         ])
-        url = self.client.find_download_url(release, 'M9A-win-x86_64-v*-Lite.zip')
+        url = self.client.find_download_url(release, 'M9A-win-x86_64-v*-PiCLI.zip')
         self.assertIsNone(url)
-
-    def test_select_smallest(self):
-        """选择最小文件"""
-        release = self._make_release([
-            {'name': 'M9A-win-x86_64-v3.28.3-MXU.zip', 'browser_download_url': 'https://url/mxu', 'size': 500},
-            {'name': 'M9A-win-x86_64-v3.28.3-MFAA.zip', 'browser_download_url': 'https://url/mfaa', 'size': 200},
-            {'name': 'M9A-win-x86_64-v3.28.3-PiCLI.zip', 'browser_download_url': 'https://url/picli', 'size': 300},
-        ])
-        url = self.client.find_download_url(
-            release, 'M9A-win-x86_64-v*-*.zip', select_smallest=True,
-        )
-        self.assertEqual(url, 'https://url/mfaa')
-
-    def test_exclude_patterns(self):
-        """排除指定模式"""
-        release = self._make_release([
-            {'name': 'M9A-win-x86_64-v3.28.3-PiCLI.zip', 'browser_download_url': 'https://url/picli', 'size': 100},
-            {'name': 'M9A-win-x86_64-v3.28.3-MXU.zip', 'browser_download_url': 'https://url/mxu', 'size': 500},
-        ])
-        url = self.client.find_download_url(
-            release, 'M9A-win-x86_64-v*-*.zip',
-            select_smallest=True,
-            exclude_patterns=['M9A-win-x86_64-v*-PiCLI.zip'],
-        )
-        self.assertEqual(url, 'https://url/mxu')
 
 
 class TestGetAssetSha256(unittest.TestCase):
@@ -200,6 +140,17 @@ M9A_Update_Assistant-Nuitka-v1.10.0.exe sha256:abcdef0123456789abcdef0123456789a
     def test_not_found(self):
         result = self.client.get_exe_sha256_from_body({'body': ''}, 'nonexistent.exe')
         self.assertIsNone(result)
+
+
+class TestRemovedReleaseKeywordParser(unittest.TestCase):
+    """release body 关键词解析移除测试"""
+
+    def test_parse_release_keywords_removed(self):
+        """GitHubReleaseClient 不再解析 CLI/GUI 关键词"""
+        logger = logging.getLogger("TestGitHub")
+        logger.setLevel(logging.CRITICAL)
+        client = GitHubReleaseClient('test/repo', 'release', '', logger)
+        self.assertFalse(hasattr(client, 'parse_release_keywords'))
 
 
 if __name__ == '__main__':

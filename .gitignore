@@ -192,6 +192,7 @@ cython_debug/
 /*.yaml
 /*.yml
 docs/superpowers/
+/.superpowers
 
 # AI 生成文档
 gpt*.md

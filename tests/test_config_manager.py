@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
+import configparser
 import logging
 import os
 import sys
@@ -65,7 +66,7 @@ proxy = http://127.0.0.1:7890
             self.assertEqual(cm.m9a_folders, [r'Z:\M9A', r'Z:\M9A2'])
             self.assertTrue(cm.log_save_enabled)
             self.assertEqual(cm.log_max_files, 10)
-            self.assertEqual(cm.github_repo, 'MAA1999/M9A')
+            self.assertEqual(cm.github_repo, 'MAA1999/m9a-cli')
             self.assertEqual(cm.github_release_version, 'preview')
             self.assertEqual(cm.github_proxy, 'http://127.0.0.1:7890')
         finally:
@@ -100,9 +101,10 @@ m9a_folders =
         path = self._make_config(content)
         try:
             cm = ConfigManager(path, self.logger)
+            cm.load()
             self.assertEqual(cm.archive_folder_path, '存档文件夹')
             self.assertEqual(cm.log_max_files, 5)
-            self.assertEqual(cm.github_repo, 'MAA1999/M9A')
+            self.assertEqual(cm.github_repo, 'MAA1999/m9a-cli')
             self.assertEqual(cm.github_release_version, 'preview')
             self.assertEqual(cm.github_proxy, '')
             self.assertTrue(cm.self_update_enabled)
@@ -189,6 +191,156 @@ repo = test/repo
             self.assertEqual(cm.archive_folder_path, '存档文件夹')
         finally:
             os.unlink(path)
+
+
+    def test_default_repo_is_m9a_cli(self):
+        """测试默认 GitHub 仓库指向 CLI 仓库"""
+        self.assertEqual(
+            ConfigManager.DEFAULT_SECTIONS['GitHub']['repo'],
+            'MAA1999/m9a-cli',
+        )
+
+    def test_old_default_repo_migrates_to_cli_repo(self):
+        """测试旧默认仓库自动迁移到 CLI 仓库"""
+        content = r"""[Paths]
+m9a_folders = Z:\M9A
+
+[Logs]
+save_enabled = false
+max_files = 5
+
+[GitHub]
+repo = MAA1999/M9A
+m9a_update_channel = preview
+proxy =
+
+[SelfUpdate]
+enabled = true
+self_update_channel = stable
+"""
+        path = self._make_config(content)
+        try:
+            cm = ConfigManager(path, self.logger)
+            cm.load()
+            self.assertEqual(cm.github_repo, 'MAA1999/m9a-cli')
+
+            parser = configparser.ConfigParser(strict=False)
+            parser.read(path, encoding='utf-8')
+            self.assertEqual(parser.get('GitHub', 'repo'), 'MAA1999/m9a-cli')
+        finally:
+            os.unlink(path)
+
+    def test_custom_repo_is_not_migrated(self):
+        """测试自定义仓库不会被迁移覆盖"""
+        content = r"""[Paths]
+m9a_folders = Z:\M9A
+
+[Logs]
+save_enabled = false
+max_files = 5
+
+[GitHub]
+repo = custom/repo
+m9a_update_channel = preview
+proxy =
+
+[SelfUpdate]
+enabled = true
+self_update_channel = stable
+"""
+        path = self._make_config(content)
+        try:
+            cm = ConfigManager(path, self.logger)
+            cm.load()
+            self.assertEqual(cm.github_repo, 'custom/repo')
+        finally:
+            os.unlink(path)
+
+    def test_gui_zip_pattern_removed_from_config_manager(self):
+        """测试 ConfigManager 不再暴露 GUI ZIP 匹配属性"""
+        cm = ConfigManager('config.ini', self.logger)
+        self.assertFalse(hasattr(cm, 'gui_zip_pattern'))
+        self.assertEqual(cm.cli_zip_pattern, 'M9A-win-x86_64-v*.zip')
+
+    def _read_config_value(self, path: str, section: str, key: str) -> str:
+        """读取配置文件中的指定值。"""
+        parser = configparser.ConfigParser(strict=False)
+        parser.read(path, encoding='utf-8')
+        return parser.get(section, key)
+
+    def test_download_threads_default_is_added(self):
+        """缺失 download_threads 时自动补入默认值 4。"""
+        content = r"""[Paths]
+m9a_folders = Z:\M9A
+
+[Logs]
+save_enabled = false
+max_files = 5
+
+[GitHub]
+repo = custom/repo
+m9a_update_channel = preview
+proxy =
+
+[SelfUpdate]
+enabled = true
+self_update_channel = stable
+"""
+        path = self._make_config(content)
+        try:
+            cm = ConfigManager(path, self.logger)
+            cm.load()
+            self.assertEqual(cm.download_threads, 4)
+            self.assertEqual(self._read_config_value(path, 'GitHub', 'download_threads'), '4')
+        finally:
+            os.unlink(path)
+
+    def test_download_threads_empty_uses_default_and_rewrites(self):
+        """空 download_threads 回写默认值 4。"""
+        content = r"""[Paths]
+m9a_folders = Z:\M9A
+[GitHub]
+repo = custom/repo
+download_threads =
+"""
+        path = self._make_config(content)
+        try:
+            cm = ConfigManager(path, self.logger)
+            cm.load()
+            self.assertEqual(cm.download_threads, 4)
+            self.assertEqual(self._read_config_value(path, 'GitHub', 'download_threads'), '4')
+        finally:
+            os.unlink(path)
+
+    def test_download_threads_valid_values(self):
+        """纯数字线程数按规则保留或钳制。"""
+        cases = [('0', 1, '1'), ('1', 1, '1'), ('2', 2, '2'), ('4', 4, '4'), ('32', 32, '32'), ('33', 32, '32')]
+        for raw, expected_attr, expected_file in cases:
+            with self.subTest(raw=raw):
+                content = f"[Paths]\nm9a_folders = Z:\\M9A\n[GitHub]\nrepo = custom/repo\ndownload_threads = {raw}\n"
+                path = self._make_config(content)
+                try:
+                    cm = ConfigManager(path, self.logger)
+                    cm.load()
+                    self.assertEqual(cm.download_threads, expected_attr)
+                    self.assertEqual(self._read_config_value(path, 'GitHub', 'download_threads'), expected_file)
+                finally:
+                    os.unlink(path)
+
+    def test_download_threads_invalid_values_use_default(self):
+        """任意非纯数字线程数回写默认值 4。"""
+        invalid_values = ['+2', '-1', '2+', '4*', '5/', 'abc', '2abc4', 'v16beta2', '1-2', '2*3', '4 threads']
+        for raw in invalid_values:
+            with self.subTest(raw=raw):
+                content = f"[Paths]\nm9a_folders = Z:\\M9A\n[GitHub]\nrepo = custom/repo\ndownload_threads = {raw}\n"
+                path = self._make_config(content)
+                try:
+                    cm = ConfigManager(path, self.logger)
+                    cm.load()
+                    self.assertEqual(cm.download_threads, 4)
+                    self.assertEqual(self._read_config_value(path, 'GitHub', 'download_threads'), '4')
+                finally:
+                    os.unlink(path)
 
 
 if __name__ == '__main__':

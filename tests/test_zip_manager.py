@@ -227,36 +227,18 @@ class TestVerifyFileSha256(unittest.TestCase):
             os.unlink(path)
 
 
-class TestCheckLiteZipHasDeps(unittest.TestCase):
-    """check_lite_zip_has_deps 测试"""
+class TestRemovedDepsMethods(unittest.TestCase):
+    """deps 相关方法移除测试"""
 
     def setUp(self):
         self.logger = logging.getLogger("TestZip")
         self.logger.setLevel(logging.CRITICAL)
         self.zip_mgr = ZipManager(self.logger)
 
-    def test_has_deps(self):
-        """ZIP 包含 deps 文件夹"""
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as f:
-            with zipfile.ZipFile(f, 'w') as zf:
-                zf.writestr('deps/something.dll', 'data')
-                zf.writestr('other.txt', 'data')
-            path = f.name
-        try:
-            self.assertTrue(self.zip_mgr.check_lite_zip_has_deps(path))
-        finally:
-            os.unlink(path)
-
-    def test_no_deps(self):
-        """ZIP 不包含 deps 文件夹"""
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as f:
-            with zipfile.ZipFile(f, 'w') as zf:
-                zf.writestr('other.txt', 'data')
-            path = f.name
-        try:
-            self.assertFalse(self.zip_mgr.check_lite_zip_has_deps(path))
-        finally:
-            os.unlink(path)
+    def test_deps_methods_removed(self):
+        """ZipManager 不再提供 deps 检查或提取方法"""
+        self.assertFalse(hasattr(self.zip_mgr, 'check_lite_zip_has_deps'))
+        self.assertFalse(hasattr(self.zip_mgr, 'extract_deps_from_full_zip'))
 
 
 class TestExtractZip(unittest.TestCase):

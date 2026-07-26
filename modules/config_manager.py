@@ -51,6 +51,46 @@ def resolve_temp_folder(temp_folder_config: str, program_dir: str = '',
     return temp_folder_config
 
 
+DOWNLOAD_THREADS_DEFAULT = 4
+DOWNLOAD_THREADS_MAX = 32
+
+
+def parse_download_threads(value: str, logger: logging.Logger = None,
+                           source: str = '配置') -> tuple[int, bool]:
+    """解析下载线程数。
+
+    Args:
+        value: 原始线程数字符串。
+        logger: 日志记录器。
+        source: 日志中显示的来源名称。
+
+    Returns:
+        线程数与是否发生修正。
+    """
+    raw_value = '' if value is None else str(value).strip()
+    if not raw_value:
+        if logger:
+            logger.warning(f"{source} download_threads 为空，使用默认值 {DOWNLOAD_THREADS_DEFAULT}")
+        return DOWNLOAD_THREADS_DEFAULT, True
+
+    if not raw_value.isdigit():
+        if logger:
+            logger.warning(f"{source} download_threads 非纯数字: {raw_value}，使用默认值 {DOWNLOAD_THREADS_DEFAULT}")
+        return DOWNLOAD_THREADS_DEFAULT, True
+
+    threads = int(raw_value)
+    if threads == 0:
+        if logger:
+            logger.warning(f"{source} download_threads 为 0，已钳制为单线程(1)")
+        return 1, True
+    if threads > DOWNLOAD_THREADS_MAX:
+        if logger:
+            logger.warning(f"{source} download_threads 超过上限 {DOWNLOAD_THREADS_MAX}: {threads}，已钳制")
+        return DOWNLOAD_THREADS_MAX, True
+
+    return threads, False
+
+
 class ConfigManager:
     """配置管理器，负责配置初始化、加载、验证"""
 
@@ -65,9 +105,10 @@ class ConfigManager:
             'max_files': '5',
         },
         'GitHub': {
-            'repo': 'MAA1999/M9A',
+            'repo': 'MAA1999/m9a-cli',
             'proxy': '',
             'm9a_update_channel': 'preview',
+            'download_threads': '4',
         },
         'SelfUpdate': {
             'enabled': 'true',
@@ -84,6 +125,7 @@ class ConfigManager:
         'GitHub.repo': 'GitHub 仓库地址（格式：用户名/仓库名）',
         'GitHub.proxy': '代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080），留空表示不使用代理',
         'GitHub.m9a_update_channel': 'M9A 更新通道\npreview: 包括预发布版本 (Alpha/Beta/RC)\nstable: 仅正式发布版本',
+        'GitHub.download_threads': '下载线程数，默认 4；1 表示单线程，0 自动钳制为 1；2 到 32 表示多分段下载；只接受纯数字',
         'SelfUpdate.enabled': '是否启用软件自我更新',
         'SelfUpdate.self_update_channel': '自我更新版本通道\npreview: 包括预发布版本 (Alpha/Beta/RC)\nstable: 仅正式发布版本',
     }
@@ -118,15 +160,15 @@ class ConfigManager:
         self.m9a_folders: List[str] = []
         self.temp_folder = ''
         self.archive_folder_path = '存档文件夹'
-        self.cli_zip_pattern = 'M9A-win-x86_64-v*-Lite.zip'
-        self.gui_zip_pattern = 'M9A-win-x86_64-v*-Full.zip'
+        self.cli_zip_pattern = 'M9A-win-x86_64-v*.zip'
         self.log_max_files = 5
         self.log_save_enabled = False
-        self.github_repo = 'MAA1999/M9A'
+        self.github_repo = 'MAA1999/m9a-cli'
         self.github_release_version = 'preview'
         self.github_proxy = ''
         self.self_update_enabled = True
         self.self_update_channel = 'stable'
+        self.download_threads = 4
 
     def _generate_default_config(self) -> None:
         """生成默认配置文件"""
@@ -367,9 +409,18 @@ class ConfigManager:
         self.log_max_files = self.config.getint('Logs', 'max_files', fallback=5)
         self.log_save_enabled = self.config.getboolean('Logs', 'save_enabled', fallback=True)
 
-        self.github_repo = self.config.get('GitHub', 'repo', fallback='MAA1999/M9A')
+        self.github_repo = self.config.get('GitHub', 'repo', fallback='MAA1999/m9a-cli')
         self.github_release_version = self.config.get('GitHub', 'm9a_update_channel', fallback='preview')
         self.github_proxy = self.config.get('GitHub', 'proxy', fallback='').strip()
+        raw_download_threads = self.config.get('GitHub', 'download_threads', fallback='4')
+        self.download_threads, threads_changed = parse_download_threads(
+            raw_download_threads,
+            self.logger,
+            '配置',
+        )
+        if threads_changed:
+            self.config.set('GitHub', 'download_threads', str(self.download_threads))
+            self._regenerate_config_file()
         self.self_update_enabled = self.config.getboolean('SelfUpdate', 'enabled', fallback=True)
         self.self_update_channel = self.config.get('SelfUpdate', 'self_update_channel', fallback='preview').strip()
 
