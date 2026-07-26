@@ -6,6 +6,7 @@ import os
 import sys
 import unittest
 
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,88 +22,141 @@ class TestDownloadFile(unittest.TestCase):
         self.logger.setLevel(logging.CRITICAL)
         self.dm = DownloadManager('', '/tmp', self.logger)
 
-    @staticmethod
-    def _make_tqdm_mock(mock_tqdm_class):
-        """构造带 format_dict 的 tqdm mock，使其能正常进出上下文"""
-        mock_pbar = mock.MagicMock()
-        mock_pbar.format_dict = {'rate': 0}
-        mock_pbar.__enter__.return_value = mock_pbar
-        mock_tqdm_class.return_value = mock_pbar
-        mock_tqdm_class.format_sizeof = mock.MagicMock(return_value="0B")
-        return mock_pbar
-
-    @mock.patch('modules.progress_bar.tqdm')
-    @mock.patch('modules.download_manager.requests.get')
-    def test_successful_download(self, mock_get, mock_tqdm):
-        """成功下载"""
-        self._make_tqdm_mock(mock_tqdm)
-        mock_response = mock.MagicMock()
-        mock_response.headers = {'Content-Length': '12'}
-        mock_response.iter_content.return_value = [b'Hello, ', b'World!']
-        mock_response.raise_for_status.return_value = None
-        mock_get.return_value.__enter__.return_value = mock_response
+    @mock.patch('modules.download_manager.Pypdl')
+    def test_successful_download_uses_pypdl(self, mock_pypdl_class):
+        """成功下载时通过 Pypdl 下载文件。"""
+        mock_downloader = mock.MagicMock()
+        mock_downloader.failed = []
+        mock_downloader.size = 12
+        mock_pypdl_class.return_value = mock_downloader
 
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
             path = f.name
         try:
+            os.unlink(path)
+            def create_file(*args, **kwargs):
+                with open(path, 'wb') as output:
+                    output.write(b'Hello, World!')
+                return True
+            mock_downloader.start.side_effect = create_file
+
             result = self.dm.download_file_with_progress('https://example.com/file.bin', path)
             self.assertTrue(result)
-            with open(path, 'rb') as f:
-                content = f.read()
-            self.assertEqual(content, b'Hello, World!')
+            mock_downloader.start.assert_called_once()
+            _, kwargs = mock_downloader.start.call_args
+            self.assertEqual(kwargs['url'], 'https://example.com/file.bin')
+            self.assertEqual(kwargs['file_path'], path)
+            self.assertEqual(kwargs['retries'], 0)
         finally:
-            os.unlink(path)
+            if os.path.exists(path):
+                os.unlink(path)
 
-    @mock.patch('modules.progress_bar.tqdm')
-    @mock.patch('modules.download_manager.requests.get')
-    def test_download_http_error(self, mock_get, mock_tqdm):
-        """HTTP 错误"""
-        self._make_tqdm_mock(mock_tqdm)
-        mock_response = mock.MagicMock()
-        mock_response.raise_for_status.side_effect = __import__('requests').HTTPError('404')
-        mock_get.return_value.__enter__.return_value = mock_response
+    @mock.patch('modules.download_manager.Pypdl')
+    def test_single_thread_parameters(self, mock_pypdl_class):
+        """0 和 1 线程请求 Pypdl 单段下载。"""
+        mock_downloader = mock.MagicMock()
+        mock_downloader.failed = []
+        mock_pypdl_class.return_value = mock_downloader
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
+            path = f.name
+
+        try:
+            mock_downloader.start.side_effect = lambda *args, **kwargs: Path(path).write_bytes(b'data') or True
+            dm = DownloadManager('', '/tmp', self.logger, download_threads=1)
+            self.assertTrue(dm.download_file_with_progress('https://example.com/file.bin', path))
+            _, kwargs = mock_downloader.start.call_args
+            self.assertFalse(kwargs['multisegment'])
+            self.assertEqual(kwargs['segments'], 1)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    @mock.patch('modules.download_manager.Pypdl')
+    def test_multi_thread_parameters(self, mock_pypdl_class):
+        """2 及以上线程请求 Pypdl 多分段下载。"""
+        mock_downloader = mock.MagicMock()
+        mock_downloader.failed = []
+        mock_pypdl_class.return_value = mock_downloader
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
+            path = f.name
+
+        try:
+            mock_downloader.start.side_effect = lambda *args, **kwargs: Path(path).write_bytes(b'data') or True
+            dm = DownloadManager('', '/tmp', self.logger, download_threads=8)
+            self.assertTrue(dm.download_file_with_progress('https://example.com/file.bin', path))
+            _, kwargs = mock_downloader.start.call_args
+            self.assertTrue(kwargs['multisegment'])
+            self.assertEqual(kwargs['segments'], 8)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    @mock.patch('modules.download_manager.Pypdl')
+    def test_proxy_and_user_agent_are_passed_to_pypdl(self, mock_pypdl_class):
+        """代理与 User-Agent 按 Pypdl 参数传递。"""
+        mock_downloader = mock.MagicMock()
+        mock_downloader.failed = []
+        mock_pypdl_class.return_value = mock_downloader
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
+            path = f.name
+
+        try:
+            mock_downloader.start.side_effect = lambda *args, **kwargs: Path(path).write_bytes(b'data') or True
+            dm = DownloadManager('socks5://127.0.0.1:10809', '/tmp', self.logger, download_threads=4)
+            self.assertTrue(dm.download_file_with_progress('https://example.com/file.bin', path))
+            _, kwargs = mock_downloader.start.call_args
+            self.assertEqual(kwargs['proxy'], 'socks5://127.0.0.1:10809')
+            self.assertEqual(kwargs['headers']['User-Agent'], 'M9A-Update-Assistant')
+            self.assertNotIn('proxies', kwargs)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    @mock.patch('modules.download_manager.Pypdl')
+    def test_pypdl_exception_returns_false(self, mock_pypdl_class):
+        """Pypdl 异常时返回 False。"""
+        mock_downloader = mock.MagicMock()
+        mock_downloader.start.side_effect = RuntimeError('download failed')
+        mock_pypdl_class.return_value = mock_downloader
 
         result = self.dm.download_file_with_progress('https://example.com/file.bin', '/tmp/test.bin')
         self.assertFalse(result)
 
-    @mock.patch('modules.progress_bar.tqdm')
-    @mock.patch('modules.download_manager.requests.get')
-    def test_no_content_length(self, mock_get, mock_tqdm):
-        """无 Content-Length 头"""
-        self._make_tqdm_mock(mock_tqdm)
-        mock_response = mock.MagicMock()
-        mock_response.headers = {}
-        mock_response.iter_content.return_value = [b'data']
-        mock_response.raise_for_status.return_value = None
-        mock_get.return_value.__enter__.return_value = mock_response
+    @mock.patch('modules.download_manager.Pypdl')
+    def test_pypdl_failed_items_returns_false(self, mock_pypdl_class):
+        """Pypdl 完成但 failed 非空时返回 False。"""
+        mock_downloader = mock.MagicMock()
+        mock_downloader.failed = ['segment failed']
+        mock_pypdl_class.return_value = mock_downloader
 
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
             path = f.name
+
         try:
+            mock_downloader.start.side_effect = lambda *args, **kwargs: Path(path).write_bytes(b'data') or True
             result = self.dm.download_file_with_progress('https://example.com/file.bin', path)
-            self.assertTrue(result)
+            self.assertFalse(result)
         finally:
-            os.unlink(path)
+            if os.path.exists(path):
+                os.unlink(path)
 
-    @mock.patch('modules.progress_bar.tqdm')
-    @mock.patch('modules.download_manager.requests.get')
-    def test_creates_parent_dir(self, mock_get, mock_tqdm):
-        """自动创建父目录"""
-        self._make_tqdm_mock(mock_tqdm)
-        mock_response = mock.MagicMock()
-        mock_response.headers = {'Content-Length': '4'}
-        mock_response.iter_content.return_value = [b'data']
-        mock_response.raise_for_status.return_value = None
-        mock_get.return_value.__enter__.return_value = mock_response
+    @mock.patch('modules.download_manager.Pypdl')
+    def test_missing_target_file_returns_false(self, mock_pypdl_class):
+        """Pypdl 完成但目标文件不存在时返回 False。"""
+        mock_downloader = mock.MagicMock()
+        mock_downloader.failed = []
+        mock_pypdl_class.return_value = mock_downloader
 
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmpdir:
-            save_path = os.path.join(tmpdir, 'sub', 'deep', 'file.bin')
-            result = self.dm.download_file_with_progress('https://example.com/file.bin', save_path)
-            self.assertTrue(result)
-            self.assertTrue(os.path.exists(save_path))
+        result = self.dm.download_file_with_progress('https://example.com/file.bin', '/tmp/missing-test.bin')
+        self.assertFalse(result)
 
 
 if __name__ == '__main__':
