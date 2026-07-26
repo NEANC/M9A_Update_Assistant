@@ -2,7 +2,7 @@
 # -_- coding: utf-8 -_-
 
 # 版本号, 发版前手动修改，CI 构建自动写入
-VERSION = "v1.16.5"
+VERSION = "v2.0.0"
 
 def print_info():
     """打印程序的版本和版权信息。"""
