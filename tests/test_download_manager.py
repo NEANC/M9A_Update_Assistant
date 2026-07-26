@@ -158,6 +158,11 @@ class TestDownloadFile(unittest.TestCase):
         result = self.dm.download_file_with_progress('https://example.com/file.bin', '/tmp/missing-test.bin')
         self.assertFalse(result)
 
+    def test_download_manager_does_not_import_requests(self):
+        """文件下载适配层不再导入 requests。"""
+        import modules.download_manager as download_manager
+        self.assertFalse(hasattr(download_manager, 'requests'))
+
 
 if __name__ == '__main__':
     unittest.main()
