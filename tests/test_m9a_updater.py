@@ -738,6 +738,23 @@ class TestMainThreadsOverride(unittest.TestCase):
 
         self.assertEqual(assistant._download.download_threads, 8)
 
+    @mock.patch('M9A_Update_Assistant.M9AUpdateAssistant')
+    @mock.patch('M9A_Update_Assistant.sys.exit')
+    def test_main_retry_update_threads_overrides_download_manager(self, mock_exit, mock_assistant_class):
+        """测试 --retry-update 模式下 CLI 线程数覆盖 DownloadManager 本次运行配置。"""
+        assistant = mock.MagicMock()
+        assistant._download.download_threads = 4
+        assistant.check_self_update.return_value = True
+        mock_assistant_class.return_value = assistant
+
+        with mock.patch.object(sys, 'argv', ['M9A_Update_Assistant.py', '--retry-update', '-t', '8']):
+            from M9A_Update_Assistant import main
+            main()
+
+        self.assertEqual(assistant._download.download_threads, 8)
+        assistant.check_self_update.assert_called_once_with()
+        mock_exit.assert_called_once_with(0)
+
 
 class TestParseCommandLineArgs(unittest.TestCase):
     """parse_command_line_args 命令行解析测试"""
