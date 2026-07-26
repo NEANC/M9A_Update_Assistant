@@ -623,6 +623,24 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
             self.assertTrue(result)
             assistant._updater.restore_config.assert_called_once_with(str(m9a_folder), 'v3.19.0')
 
+    def test_cache_invalidated_then_download_fails_does_not_use_bad_cache(self):
+        """缓存校验失败且下载也失败时，不继续使用坏缓存。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            m9a_folder = Path(tmp) / 'M9A'
+            m9a_folder.mkdir()
+            archive_dir = Path(tmp) / 'archive'
+            archive_dir.mkdir()
+
+            tag = 'v4.5.4'
+            assist = self._create_assistant(str(archive_dir), 'v4.4.0', tag, m9a_folder)
+            assist._download_latest_release = Mock(return_value=None)
+            assist._updater.find_cli_zip.return_value = str(Path(tmp) / 'ZIP' / 'M9A-win-x86_64-v4.5.4-PiCLI.zip')
+            assist._zip.verify_zip_integrity.return_value = False
+
+            result = assist.run_update(tag)
+            self.assertFalse(result)
+            assist._zip.extract_zip_with_progress.assert_not_called()
+
 
 class TestDownloadLatestReleaseCliOnly(unittest.TestCase):
     """_download_latest_release CLI-only 流程测试"""

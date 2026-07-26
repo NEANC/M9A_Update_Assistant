@@ -304,6 +304,9 @@ class M9AUpdateAssistant:
             version = download_result.get('version', '')
             cli_zip = downloaded_files[0]
         elif cli_zip:
+            if not self._zip.verify_zip_integrity(cli_zip, release_info, Path(cli_zip).name, self._github):
+                self.logger.critical("本地缓存文件校验失败，且无法从 GitHub 下载，更新终止")
+                return False
             self.logger.warning("从 GitHub 下载失败，使用本地缓存文件")
         else:
             info = self._updater.find_cli_zip(
@@ -525,6 +528,12 @@ def main():
         logger = logging.getLogger("M9AUpdateAssistant")
         logger.info("正在重试自更新...")
         assistant = M9AUpdateAssistant()
+        if args.threads:
+            assistant._download.download_threads, _ = parse_download_threads(
+                args.threads,
+                assistant.logger,
+                'CLI',
+            )
         need_exit = assistant.check_self_update()
         if need_exit:
             sys.exit(0)
