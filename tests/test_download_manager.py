@@ -146,6 +146,12 @@ class TestDownloadProgressBarFormat(unittest.TestCase):
         self.assertIn('{remaining}', DOWNLOAD_BAR_FORMAT)
         self.assertNotIn('{rate_fmt}', DOWNLOAD_BAR_FORMAT)
 
+    def test_download_bar_format_does_not_use_rate_fmt(self):
+        """下载进度条不使用 tqdm 推导速度字段。"""
+        from modules.progress_bar import DOWNLOAD_BAR_FORMAT
+
+        self.assertNotIn('{rate_fmt}', DOWNLOAD_BAR_FORMAT)
+
     @mock.patch('modules.progress_bar.tqdm')
     def test_create_download_progress_bar_uses_project_style(self, mock_tqdm):
         """下载进度条由 progress_bar 模块统一创建。"""
@@ -447,6 +453,59 @@ class TestSingleThreadDownload(unittest.TestCase):
             if os.path.exists(path):
                 os.unlink(path)
 
+    def test_single_thread_unknown_size_success_when_file_non_empty(self):
+        """未知总大小时文件存在且非空即成功。"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as temp_file:
+            path = temp_file.name
+        os.unlink(path)
+        response = FakeResponse(status_code=200, headers={}, chunks=[b'hello', b'world'])
+        session = FakeSession(get_responses=[response])
+        pbar = FakeProgressBar()
+
+        try:
+            result = self.dm._download_single_threaded(
+                session,
+                'https://example.com/file.bin',
+                Path(path),
+                total_size=0,
+                pbar=pbar,
+                speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                progress_lock=Lock(),
+            )
+
+            self.assertTrue(result)
+            self.assertEqual(Path(path).read_bytes(), b'helloworld')
+            self.assertGreater(Path(path).stat().st_size, 0)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_single_thread_unknown_size_416_is_failure(self):
+        """未知总大小收到 416 不视为成功。"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as temp_file:
+            path = temp_file.name
+        os.unlink(path)
+        response = FakeResponse(status_code=416)
+        session = FakeSession(get_responses=[response])
+        pbar = FakeProgressBar()
+
+        try:
+            result = self.dm._download_single_threaded(
+                session,
+                'https://example.com/file.bin',
+                Path(path),
+                total_size=0,
+                pbar=pbar,
+                speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                progress_lock=Lock(),
+            )
+
+            self.assertFalse(result)
+            self.assertEqual(len(session.get_calls), 1)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
 
 class TestMultithreadDownload(unittest.TestCase):
     """多线程分段下载测试。"""
@@ -557,6 +616,96 @@ class TestMultithreadDownload(unittest.TestCase):
             self.assertFalse(Path(str(save_path) + '.part1').exists())
             self.assertEqual(sessions[0].get_calls[0][1]['headers']['Range'], 'bytes=0-2')
             self.assertEqual(sessions[1].get_calls[0][1]['headers']['Range'], 'bytes=3-5')
+
+    def test_part_larger_than_segment_is_deleted_and_redownloaded(self):
+        """part 大于分段长度时删除重下。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / 'file.bin'
+            segment = DownloadSegment(index=0, start=0, end=2)
+            part_path = Path(str(save_path) + '.part0')
+            part_path.write_bytes(b'too-large-data')
+            self.assertGreater(part_path.stat().st_size, segment.length)
+
+            response = FakeResponse(
+                status_code=206,
+                headers={'Content-Range': 'bytes 0-2/6'},
+                chunks=[b'abc'],
+            )
+            session = FakeSession(get_responses=[response])
+            pbar = FakeProgressBar()
+
+            result = self.dm._download_part(
+                session,
+                'https://example.com/file.bin',
+                save_path,
+                segment,
+                pbar,
+                NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                Lock(),
+            )
+
+            self.assertTrue(result)
+            self.assertEqual(part_path.read_bytes(), b'abc')
+            self.assertEqual(part_path.stat().st_size, segment.length)
+
+    def test_multithread_failure_keeps_completed_part_files(self):
+        """多线程失败时保留已完成 part 文件。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / 'file.bin'
+            part0_path = Path(str(save_path) + '.part0')
+            part1_path = Path(str(save_path) + '.part1')
+
+            good_session = FakeSession(
+                get_responses=[FakeResponse(206, {'Content-Range': 'bytes 0-2/6'}, [b'abc'])]
+            )
+            bad_session = FakeSession(
+                get_responses=[FakeResponse(206, {'Content-Range': 'bytes 1-5/6'}, [b'bad'])] * 3
+            )
+
+            sessions = [good_session, bad_session]
+            dm = DownloadManager('', temp_dir, self.logger, download_threads=2)
+
+            with mock.patch('modules.download_manager.requests.Session', side_effect=sessions):
+                result = dm._download_multithreaded(
+                    'https://example.com/file.bin',
+                    save_path,
+                    total_size=6,
+                    pbar=FakeProgressBar(),
+                    speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                    progress_lock=Lock(),
+                )
+
+            self.assertFalse(result)
+            self.assertTrue(part0_path.exists())
+            self.assertEqual(part0_path.read_bytes(), b'abc')
+
+    def test_requests_session_is_not_shared_between_part_workers(self):
+        """每个分段 worker 使用独立 Session。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / 'file.bin'
+            dm = DownloadManager('', temp_dir, self.logger, download_threads=3)
+
+            sessions = [
+                FakeSession(get_responses=[FakeResponse(206, {'Content-Range': 'bytes 0-1/6'}, [b'ab'])]),
+                FakeSession(get_responses=[FakeResponse(206, {'Content-Range': 'bytes 2-3/6'}, [b'cd'])]),
+                FakeSession(get_responses=[FakeResponse(206, {'Content-Range': 'bytes 4-5/6'}, [b'ef'])]),
+            ]
+
+            with mock.patch('modules.download_manager.requests.Session', side_effect=sessions) as mock_session:
+                result = dm._download_multithreaded(
+                    'https://example.com/file.bin',
+                    save_path,
+                    total_size=6,
+                    pbar=FakeProgressBar(),
+                    speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                    progress_lock=Lock(),
+                )
+
+            self.assertTrue(result)
+            self.assertEqual(mock_session.call_count, 3)
+            for session in sessions:
+                self.assertEqual(len(session.get_calls), 1)
+                self.assertEqual(session.get_calls[0][1]['headers']['User-Agent'], 'M9A-Update-Assistant')
 
 
 if __name__ == '__main__':
