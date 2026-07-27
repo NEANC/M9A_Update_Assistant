@@ -4,16 +4,19 @@
 import logging
 import os
 import sys
+import tempfile
+import time
 import unittest
 
 from pathlib import Path
+from threading import Lock
 from unittest import mock
 
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.download_manager import DownloadManager
+from modules.download_manager import DownloadManager, NetworkSpeedMeter
 
 
 class TestDownloadFile(unittest.TestCase):
@@ -275,6 +278,10 @@ class FakeSession:
         self.get_calls.append((url, kwargs))
         return self.get_responses.pop(0)
 
+    def close(self):
+        """记录关闭操作，无实际操作。"""
+        pass
+
 
 class TestDownloadManagerHelpers(unittest.TestCase):
     """DownloadManager 下载 helper 测试。"""
@@ -369,6 +376,153 @@ class TestDownloadProgressBarFormat(unittest.TestCase):
         requirements = Path('requirements.txt').read_text(encoding='utf-8')
         self.assertNotIn('pypdl', requirements.lower())
         self.assertIn('requests', requirements.lower())
+
+
+class FakeProgressBar:
+    """tqdm 进度条替身。"""
+
+    def __init__(self):
+        """初始化进度条替身。"""
+        self.n = 0
+        self.total = None
+        self.updates = []
+        self.postfixes = []
+        self.closed = False
+        self.refresh_count = 0
+
+    def update(self, value):
+        """记录进度增量。"""
+        self.updates.append(value)
+        self.n += value
+
+    def set_postfix_str(self, value, refresh=False):
+        """记录 postfix。"""
+        self.postfixes.append((value, refresh))
+
+    def refresh(self):
+        """记录刷新。"""
+        self.refresh_count += 1
+
+    def close(self):
+        """记录关闭。"""
+        self.closed = True
+
+
+class TestSingleThreadDownload(unittest.TestCase):
+    """单线程下载测试。"""
+
+    def setUp(self):
+        """初始化测试对象。"""
+        self.logger = logging.getLogger('TestSingleThreadDownload')
+        self.logger.setLevel(logging.CRITICAL)
+        self.dm = DownloadManager('', '/tmp', self.logger, download_threads=1)
+
+    def test_single_thread_download_writes_stream_and_updates_progress(self):
+        """单线程从头下载时流式写入并更新进度条。"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as temp_file:
+            path = temp_file.name
+        os.unlink(path)
+        response = FakeResponse(status_code=200, headers={'Content-Length': '6'}, chunks=[b'abc', b'def'])
+        session = FakeSession(get_responses=[response])
+        pbar = FakeProgressBar()
+
+        try:
+            result = self.dm._download_single_threaded(
+                session,
+                'https://example.com/file.bin',
+                Path(path),
+                total_size=6,
+                pbar=pbar,
+                speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                progress_lock=Lock(),
+            )
+
+            self.assertTrue(result)
+            self.assertEqual(Path(path).read_bytes(), b'abcdef')
+            self.assertEqual(pbar.updates, [3, 3])
+            self.assertEqual(response.iter_content_chunk_sizes, [128 * 1024])
+            _, kwargs = session.get_calls[0]
+            self.assertTrue(kwargs['stream'])
+            self.assertEqual(kwargs['timeout'], (15, 60))
+            self.assertNotIn('Range', kwargs['headers'])
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_single_thread_resume_appends_on_206(self):
+        """单线程收到 206 时追加续传。"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as temp_file:
+            path = temp_file.name
+            temp_file.write(b'abc')
+        response = FakeResponse(
+            status_code=206,
+            headers={'Content-Range': 'bytes 3-5/6'},
+            chunks=[b'def'],
+        )
+        session = FakeSession(get_responses=[response])
+        pbar = FakeProgressBar()
+        pbar.n = 3
+
+        try:
+            result = self.dm._download_single_threaded(
+                session,
+                'https://example.com/file.bin',
+                Path(path),
+                total_size=6,
+                pbar=pbar,
+                speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                progress_lock=Lock(),
+            )
+
+            self.assertTrue(result)
+            self.assertEqual(Path(path).read_bytes(), b'abcdef')
+            _, kwargs = session.get_calls[0]
+            self.assertEqual(kwargs['headers']['Range'], 'bytes=3-')
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_single_thread_200_overwrites_existing_file_and_resets_progress(self):
+        """服务端忽略 Range 返回 200 时覆盖重下。"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as temp_file:
+            path = temp_file.name
+            temp_file.write(b'old')
+        response = FakeResponse(status_code=200, headers={'Content-Length': '3'}, chunks=[b'new'])
+        session = FakeSession(get_responses=[response])
+        pbar = FakeProgressBar()
+        pbar.n = 3
+
+        try:
+            result = self.dm._download_single_threaded(
+                session,
+                'https://example.com/file.bin',
+                Path(path),
+                total_size=0,
+                pbar=pbar,
+                speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                progress_lock=Lock(),
+            )
+
+            self.assertTrue(result)
+            self.assertEqual(Path(path).read_bytes(), b'new')
+            self.assertEqual(pbar.n, 3)
+            self.assertEqual(pbar.total, 3)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_single_thread_closes_progress_when_integrated_download_fails(self):
+        """集成入口失败时关闭进度条。"""
+        pbar = FakeProgressBar()
+        response = FakeResponse(status_code=500)
+        session = FakeSession(head_response=FakeResponse(status_code=500), get_responses=[response, response, response])
+
+        with mock.patch('modules.download_manager.requests.Session', return_value=session), \
+                mock.patch('modules.download_manager.create_download_progress_bar', return_value=pbar):
+            result = self.dm.download_file_with_progress('https://example.com/file.bin', 'missing-dir/file.bin')
+
+        self.assertFalse(result)
+        self.assertTrue(pbar.closed)
 
 
 if __name__ == '__main__':

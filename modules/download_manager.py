@@ -137,8 +137,119 @@ class DownloadManager:
             return f"{bytes_per_second / 1024:.2f}KiB/s"
         return f"{bytes_per_second / 1024 / 1024:.2f}MiB/s"
 
+    def _extract_total_size_from_get_response(self, response, existing_size: int) -> int:
+        """从 GET 响应头推导完整文件大小。"""
+        content_range = response.headers.get('Content-Range', '')
+        if content_range.startswith('bytes ') and '/' in content_range:
+            total_part = content_range.rsplit('/', 1)[1]
+            if total_part.isdigit():
+                return int(total_part)
+        content_length = response.headers.get('Content-Length')
+        if response.status_code == 200 and content_length and content_length.isdigit():
+            return int(content_length)
+        if response.status_code == 206 and content_length and content_length.isdigit():
+            return existing_size + int(content_length)
+        return 0
+
+    def _update_progress(self, pbar, progress_lock: Lock, speed_meter: NetworkSpeedMeter,
+                         byte_count: int) -> None:
+        """更新进度条和网络速度。"""
+        with progress_lock:
+            speed = speed_meter.update(byte_count)
+            pbar.update(byte_count)
+            pbar.set_postfix_str(self._format_speed(speed), refresh=False)
+            pbar.refresh()
+
+    def _download_single_threaded(self, session, url: str, target_path: Path,
+                                  total_size: int, pbar, speed_meter: NetworkSpeedMeter,
+                                  progress_lock: Lock) -> bool:
+        """单线程下载，支持续传和重试。
+
+        Args:
+            session: requests Session。
+            url: 下载 URL。
+            target_path: 目标文件路径。
+            total_size: 已知总大小（0 表示未知）。
+            pbar: tqdm 进度条实例。
+            speed_meter: 网速统计器。
+            progress_lock: 进度更新锁。
+
+        Returns:
+            bool: 是否下载成功。
+        """
+        target = Path(target_path)
+
+        # 已知总大小且文件已完整
+        if total_size > 0 and target.exists() and target.stat().st_size == total_size:
+            return True
+
+        existing_size = 0
+        if target.exists():
+            existing_size = target.stat().st_size
+
+        # 本地文件大于已知总大小，覆盖重下
+        if total_size > 0 and existing_size >= total_size:
+            existing_size = 0
+
+        headers = {'User-Agent': USER_AGENT}
+        if existing_size > 0:
+            headers['Range'] = f'bytes={existing_size}-'
+
+        for attempt in range(DOWNLOAD_RETRIES):
+            try:
+                response = session.get(
+                    url,
+                    headers=headers,
+                    timeout=DOWNLOAD_TIMEOUT,
+                    proxies=self._build_proxies(),
+                    stream=True,
+                )
+                response.raise_for_status()
+
+                if response.status_code == 206:
+                    # 续传追加
+                    with open(target, 'ab') as f:
+                        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                            if chunk:
+                                f.write(chunk)
+                                self._update_progress(pbar, progress_lock, speed_meter, len(chunk))
+
+                    if total_size == 0:
+                        return target.exists() and target.stat().st_size > 0
+                    return True
+
+                elif response.status_code == 200:
+                    # 覆盖从头下载
+                    pbar.n = 0
+                    content_length = response.headers.get('Content-Length')
+                    if content_length and content_length.isdigit():
+                        pbar.total = int(content_length)
+                    pbar.refresh()
+
+                    with open(target, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                            if chunk:
+                                f.write(chunk)
+                                self._update_progress(pbar, progress_lock, speed_meter, len(chunk))
+
+                    if total_size == 0:
+                        return target.exists() and target.stat().st_size > 0
+                    return True
+
+                elif response.status_code == 416:
+                    if total_size > 0 and target.exists() and target.stat().st_size == total_size:
+                        return True
+
+            except requests.RequestException as exc:
+                self.logger.debug(f"下载尝试 {attempt + 1} 失败: {exc}")
+
+            if attempt < DOWNLOAD_RETRIES - 1:
+                time.sleep(1)
+
+        return False
+
     def download_file_with_progress(self, url: str, save_path: str) -> bool:
-        """使用 Pypdl 下载文件并保持现有返回值语义。
+        """下载文件并显示进度条。
 
         Args:
             url: 下载 URL。
@@ -151,45 +262,54 @@ class DownloadManager:
         self.logger.info(f"开始下载文件: {file_name}")
         self.logger.debug(f"下载 URL: {url}")
 
+        pbar = None
         try:
             Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-            threads = self.download_threads if isinstance(self.download_threads, int) else 4
-            multisegment = threads >= 2
-            segments = threads if multisegment else 1
 
-            downloader = Pypdl()
-            kwargs = {
-                'url': url,
-                'file_path': save_path,
-                'segments': segments,
-                'multisegment': multisegment,
-                'retries': 0,
-                'display': True,
-                'headers': {'User-Agent': 'M9A-Update-Assistant'},
-            }
-            if self.proxy:
-                kwargs['proxy'] = self.proxy
+            metadata_session = requests.Session()
+            metadata = self._get_download_metadata(metadata_session, url)
+            metadata_session.close()
 
-            downloader.start(**kwargs)
+            target = Path(save_path)
+            existing_size = target.stat().st_size if target.exists() else 0
+            pbar_total = metadata.total_size if metadata.total_size > 0 else existing_size
+            pbar = create_download_progress_bar(
+                total=pbar_total,
+                desc=f"下载 {file_name}",
+            )
+            pbar.n = existing_size
+            pbar.refresh()
 
-            failed = getattr(downloader, 'failed', None)
-            if failed:
-                message = f"Pypdl 下载存在失败项: {failed}"
-                self.logger.error(message)
-                print(format_error(f"下载 {file_name}", message))
+            speed_meter = NetworkSpeedMeter()
+            progress_lock = Lock()
+            download_session = requests.Session()
+
+            success = self._download_single_threaded(
+                download_session,
+                url,
+                target,
+                metadata.total_size,
+                pbar,
+                speed_meter,
+                progress_lock,
+            )
+            download_session.close()
+
+            if success:
+                downloaded_size = target.stat().st_size
+                print(format_ok("下载", file_name, save_path, downloaded_size))
+                self.logger.debug(
+                    f"下载完成，文件大小: {downloaded_size / (1024 * 1024):.2f} MB，"
+                    f"保存路径: {save_path}"
+                )
+                return True
+            else:
+                print(format_error(f"下载 {file_name}", "下载失败"))
                 return False
-
-            if not Path(save_path).exists():
-                message = f"下载完成但目标文件不存在: {save_path}"
-                self.logger.error(message)
-                print(format_error(f"下载 {file_name}", message))
-                return False
-
-            downloaded_size = Path(save_path).stat().st_size
-            print(format_ok("下载", file_name, save_path, downloaded_size))
-            self.logger.debug(f"下载完成，文件大小: {downloaded_size / (1024 * 1024):.2f} MB，保存路径: {save_path}")
-            return True
         except Exception as e:
             self.logger.error(f"下载文件时发生错误: {e}")
             print(format_error(f"下载 {file_name}", str(e)))
             return False
+        finally:
+            if pbar is not None:
+                pbar.close()
