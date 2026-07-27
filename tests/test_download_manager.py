@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import requests
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.download_manager import DownloadManager
@@ -218,6 +220,118 @@ class TestDownloadFile(unittest.TestCase):
         finally:
             if os.path.exists(path):
                 os.unlink(path)
+
+
+class FakeResponse:
+    """requests 响应替身。"""
+
+    def __init__(self, status_code=200, headers=None, chunks=None, error=None):
+        """初始化响应替身。"""
+        self.status_code = status_code
+        self.headers = headers or {}
+        self.chunks = chunks or []
+        self.error = error
+        self.iter_content_chunk_sizes = []
+
+    def __enter__(self):
+        """进入上下文。"""
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        """退出上下文。"""
+        return False
+
+    def raise_for_status(self):
+        """模拟 HTTP 状态检查。"""
+        if self.error:
+            raise self.error
+        if self.status_code >= 400:
+            raise requests.HTTPError(f'HTTP {self.status_code}')
+
+    def iter_content(self, chunk_size):
+        """流式返回 chunk。"""
+        self.iter_content_chunk_sizes.append(chunk_size)
+        for chunk in self.chunks:
+            yield chunk
+
+
+class FakeSession:
+    """requests Session 替身。"""
+
+    def __init__(self, head_response=None, get_responses=None):
+        """初始化 Session 替身。"""
+        self.head_response = head_response
+        self.get_responses = list(get_responses or [])
+        self.head_calls = []
+        self.get_calls = []
+
+    def head(self, url, **kwargs):
+        """记录 HEAD 调用并返回响应。"""
+        self.head_calls.append((url, kwargs))
+        return self.head_response
+
+    def get(self, url, **kwargs):
+        """记录 GET 调用并返回响应。"""
+        self.get_calls.append((url, kwargs))
+        return self.get_responses.pop(0)
+
+
+class TestDownloadManagerHelpers(unittest.TestCase):
+    """DownloadManager 下载 helper 测试。"""
+
+    def setUp(self):
+        """初始化测试对象。"""
+        self.logger = logging.getLogger('TestDownloadHelpers')
+        self.logger.setLevel(logging.CRITICAL)
+        self.dm = DownloadManager('', '/tmp', self.logger, download_threads=4)
+
+    def test_build_proxies_returns_none_when_proxy_empty(self):
+        """空代理返回 None。"""
+        self.assertIsNone(self.dm._build_proxies())
+
+    def test_build_proxies_returns_http_and_https_proxy(self):
+        """非空代理同时用于 http 和 https。"""
+        dm = DownloadManager('socks5://127.0.0.1:10809', '/tmp', self.logger)
+        self.assertEqual(
+            dm._build_proxies(),
+            {'http': 'socks5://127.0.0.1:10809', 'https': 'socks5://127.0.0.1:10809'},
+        )
+
+    def test_get_download_metadata_reads_length_and_range(self):
+        """HEAD 元数据读取总大小与 Range 支持。"""
+        session = FakeSession(
+            head_response=FakeResponse(
+                headers={'Content-Length': '10', 'Accept-Ranges': 'bytes'},
+            )
+        )
+
+        metadata = self.dm._get_download_metadata(session, 'https://example.com/file.bin')
+
+        self.assertEqual(metadata.total_size, 10)
+        self.assertTrue(metadata.supports_range)
+        _, kwargs = session.head_calls[0]
+        self.assertEqual(kwargs['timeout'], (15, 60))
+        self.assertEqual(kwargs['headers']['User-Agent'], 'M9A-Update-Assistant')
+
+    def test_get_download_metadata_falls_back_when_head_fails(self):
+        """HEAD 失败时返回未知大小并禁用 Range。"""
+        session = FakeSession(head_response=FakeResponse(status_code=500))
+
+        metadata = self.dm._get_download_metadata(session, 'https://example.com/file.bin')
+
+        self.assertEqual(metadata.total_size, 0)
+        self.assertFalse(metadata.supports_range)
+
+    def test_split_segments_distributes_remainder_to_front(self):
+        """分段闭区间覆盖完整文件。"""
+        segments = self.dm._split_segments(10, 3)
+        self.assertEqual([(s.start, s.end) for s in segments], [(0, 3), (4, 6), (7, 9)])
+
+    def test_format_speed_uses_binary_units(self):
+        """网络速度按 B/s、KiB/s、MiB/s 格式化。"""
+        self.assertEqual(self.dm._format_speed(512), '512.00B/s')
+        self.assertEqual(self.dm._format_speed(2048), '2.00KiB/s')
+        self.assertEqual(self.dm._format_speed(2 * 1024 * 1024), '2.00MiB/s')
 
 
 class TestDownloadProgressBarFormat(unittest.TestCase):
