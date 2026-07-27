@@ -484,6 +484,23 @@ class DownloadManager:
             for session in sessions:
                 session.close()
 
+    def _get_existing_bytes(self, target_path: Path, total_size: int) -> int:
+        """获取进度条初始已完成字节数。
+
+        Args:
+            target_path: 目标文件路径。
+            total_size: 已知总大小（0 表示未知）。
+
+        Returns:
+            int: 已完成字节数。
+        """
+        if not target_path.exists():
+            return 0
+        current_size = target_path.stat().st_size
+        if total_size > 0 and current_size > total_size:
+            return 0
+        return current_size
+
     def download_file_with_progress(self, url: str, save_path: str) -> bool:
         """下载文件并显示进度条。
 
@@ -507,29 +524,45 @@ class DownloadManager:
             metadata_session.close()
 
             target = Path(save_path)
-            existing_size = target.stat().st_size if target.exists() else 0
-            pbar_total = metadata.total_size if metadata.total_size > 0 else existing_size
+            existing_bytes = self._get_existing_bytes(target, metadata.total_size)
+            pbar_total = metadata.total_size if metadata.total_size > 0 else max(existing_bytes, 1)
             pbar = create_download_progress_bar(
                 total=pbar_total,
                 desc=f"下载 {file_name}",
             )
-            pbar.n = existing_size
-            pbar.refresh()
+            if existing_bytes > 0:
+                pbar.n = existing_bytes
+                pbar.refresh()
 
             speed_meter = NetworkSpeedMeter()
             progress_lock = Lock()
-            download_session = requests.Session()
 
-            success = self._download_single_threaded(
-                download_session,
-                url,
-                target,
-                metadata.total_size,
-                pbar,
-                speed_meter,
-                progress_lock,
+            use_multithread = (
+                self.download_threads >= 2
+                and metadata.total_size > 0
+                and metadata.supports_range
             )
-            download_session.close()
+            if use_multithread:
+                success = self._download_multithreaded(
+                    url,
+                    target,
+                    metadata.total_size,
+                    pbar,
+                    speed_meter,
+                    progress_lock,
+                )
+            else:
+                download_session = requests.Session()
+                success = self._download_single_threaded(
+                    download_session,
+                    url,
+                    target,
+                    metadata.total_size,
+                    pbar,
+                    speed_meter,
+                    progress_lock,
+                )
+                download_session.close()
 
             if success:
                 downloaded_size = target.stat().st_size
