@@ -648,8 +648,8 @@ class TestMultithreadDownload(unittest.TestCase):
             self.assertEqual((Path(str(save_path) + '.part0')).read_bytes(), b'abc')
             self.assertEqual(len(session.get_calls), 2)
 
-    def test_merge_parts_writes_in_order_and_deletes_parts(self):
-        """part 按顺序合并并在成功后删除。"""
+    def test_merge_parts_writes_in_order_keeps_parts(self):
+        """part 按顺序合并但不在 _merge_parts 内删除，删除由调用方负责。"""
         with tempfile.TemporaryDirectory() as temp_dir:
             save_path = Path(temp_dir) / 'file.bin'
             Path(str(save_path) + '.part0').write_bytes(b'abc')
@@ -660,11 +660,11 @@ class TestMultithreadDownload(unittest.TestCase):
 
             self.assertTrue(result)
             self.assertEqual(save_path.read_bytes(), b'abcdef')
-            self.assertFalse(Path(str(save_path) + '.part0').exists())
-            self.assertFalse(Path(str(save_path) + '.part1').exists())
+            self.assertTrue(Path(str(save_path) + '.part0').exists())
+            self.assertTrue(Path(str(save_path) + '.part1').exists())
 
     def test_multithread_download_combines_parts(self):
-        """多线程模式完成后生成目标文件。"""
+        """多线程模式完成后生成目标文件并删除 part 文件。"""
         with tempfile.TemporaryDirectory() as temp_dir:
             save_path = Path(temp_dir) / 'file.bin'
             sessions = [
@@ -684,6 +684,8 @@ class TestMultithreadDownload(unittest.TestCase):
 
             self.assertTrue(result)
             self.assertEqual(save_path.read_bytes(), b'abcdef')
+            self.assertFalse(Path(str(save_path) + '.part0').exists())
+            self.assertFalse(Path(str(save_path) + '.part1').exists())
             self.assertEqual(sessions[0].get_calls[0][1]['headers']['Range'], 'bytes=0-2')
             self.assertEqual(sessions[1].get_calls[0][1]['headers']['Range'], 'bytes=3-5')
 

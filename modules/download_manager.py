@@ -427,12 +427,6 @@ class DownloadManager:
                             if not chunk:
                                 break
                             target.write(chunk)
-
-            for segment in segments:
-                part_path = self._get_part_path(save_path, segment.index)
-                if part_path.exists():
-                    part_path.unlink()
-
             return True
         except Exception:
             return False
@@ -480,6 +474,10 @@ class DownloadManager:
                 return False
 
             if target_path.exists() and target_path.stat().st_size == total_size:
+                for segment in segments:
+                    part_path = self._get_part_path(target_path, segment.index)
+                    if part_path.exists():
+                        part_path.unlink()
                 return True
             return False
         finally:
