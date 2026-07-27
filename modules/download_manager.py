@@ -264,6 +264,228 @@ class DownloadManager:
 
         return False
 
+    def _get_part_path(self, save_path: Path, index: int) -> Path:
+        """返回分段临时文件路径。
+
+        Args:
+            save_path: 目标文件路径。
+            index: 分段索引。
+
+        Returns:
+            Path: part 文件路径。
+        """
+        return Path(f"{save_path}.part{index}")
+
+    def _get_valid_part_size(self, save_path: Path, segment: DownloadSegment) -> int:
+        """判断 part 文件有效性并返回有效字节数。
+
+        Args:
+            save_path: 目标文件路径。
+            segment: 下载分段。
+
+        Returns:
+            int: 0 表示需重新下载，-1 表示已完成，
+                正数表示已有字节数（用于续传）。
+        """
+        part_path = self._get_part_path(save_path, segment.index)
+        if not part_path.exists():
+            return 0
+        size = part_path.stat().st_size
+        if size < segment.length:
+            return size
+        if size == segment.length:
+            return -1
+        # size > segment.length，异常情况，删除重下
+        part_path.unlink()
+        return 0
+
+    def _content_range_matches(self, segment: DownloadSegment, request_start: int,
+                               response_headers: dict) -> bool:
+        """校验响应 Content-Range 与请求区间是否一致。
+
+        Args:
+            segment: 下载分段。
+            request_start: 请求的起始字节。
+            response_headers: 响应头字典。
+
+        Returns:
+            bool: Content-Range 是否匹配。
+        """
+        content_range = response_headers.get('Content-Range', '')
+        if not content_range.startswith('bytes '):
+            return False
+        try:
+            range_part = content_range.split(' ', 1)[1].split('/')[0]
+            start_str, end_str = range_part.split('-')
+            resp_start = int(start_str)
+            resp_end = int(end_str)
+        except (ValueError, IndexError):
+            return False
+        return resp_start == request_start and resp_end == segment.end
+
+    def _download_part(self, session, url: str, save_path: Path, segment: DownloadSegment,
+                       pbar, speed_meter: NetworkSpeedMeter, progress_lock: Lock) -> bool:
+        """下载单个分段到 part 文件，内部执行 3 次重试。
+
+        Args:
+            session: 独立 requests Session。
+            url: 下载 URL。
+            save_path: 目标文件路径（用于生成 part 路径）。
+            segment: 下载分段。
+            pbar: tqdm 进度条实例。
+            speed_meter: 网速统计器。
+            progress_lock: 进度更新锁。
+
+        Returns:
+            bool: 分段是否下载成功。
+        """
+        valid_size = self._get_valid_part_size(save_path, segment)
+        if valid_size == -1:
+            return True
+
+        range_start = segment.start + valid_size
+
+        for attempt in range(DOWNLOAD_RETRIES):
+            headers = {'User-Agent': USER_AGENT}
+            headers['Range'] = f'bytes={range_start}-{segment.end}'
+
+            try:
+                response = session.get(
+                    url,
+                    headers=headers,
+                    timeout=DOWNLOAD_TIMEOUT,
+                    proxies=self._build_proxies(),
+                    stream=True,
+                )
+
+                if response.status_code == 206:
+                    if not self._content_range_matches(segment, range_start, response.headers):
+                        part_path = self._get_part_path(save_path, segment.index)
+                        if part_path.exists():
+                            part_path.unlink()
+                        range_start = segment.start
+                        valid_size = 0
+                        continue
+
+                    response.raise_for_status()
+
+                    part_path = self._get_part_path(save_path, segment.index)
+                    mode = 'ab' if range_start > segment.start else 'wb'
+                    with open(part_path, mode) as f:
+                        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                            if chunk:
+                                f.write(chunk)
+                                self._update_progress(pbar, progress_lock, speed_meter, len(chunk))
+
+                    part_size = part_path.stat().st_size
+                    if part_size == segment.length:
+                        return True
+                    # 写入后 part 不完整，继续重试续传
+                    valid_size = part_size
+                    range_start = segment.start + valid_size
+                    continue
+
+                elif response.status_code == 200:
+                    continue
+
+                elif response.status_code == 416:
+                    part_path = self._get_part_path(save_path, segment.index)
+                    if part_path.exists() and part_path.stat().st_size == segment.length:
+                        return True
+                    if part_path.exists():
+                        part_path.unlink()
+                    return False
+
+                else:
+                    response.raise_for_status()
+
+            except requests.RequestException as exc:
+                self.logger.debug(f"分段 {segment.index} 下载尝试 {attempt + 1} 失败: {exc}")
+
+            if attempt < DOWNLOAD_RETRIES - 1:
+                time.sleep(1)
+
+        return False
+
+    def _merge_parts(self, save_path: Path, segments: list[DownloadSegment]) -> bool:
+        """按顺序合并所有 part 文件并删除。
+
+        Args:
+            save_path: 目标文件路径。
+            segments: 下载分段列表。
+
+        Returns:
+            bool: 合并是否成功。
+        """
+        try:
+            with open(save_path, 'wb') as target:
+                for segment in segments:
+                    part_path = self._get_part_path(save_path, segment.index)
+                    with open(part_path, 'rb') as part:
+                        while True:
+                            chunk = part.read(CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            target.write(chunk)
+
+            for segment in segments:
+                part_path = self._get_part_path(save_path, segment.index)
+                if part_path.exists():
+                    part_path.unlink()
+
+            return True
+        except Exception:
+            return False
+
+    def _download_multithreaded(self, url: str, target_path: Path, total_size: int,
+                                pbar, speed_meter: NetworkSpeedMeter,
+                                progress_lock: Lock) -> bool:
+        """多线程分段下载协调器。
+
+        Args:
+            url: 下载 URL。
+            target_path: 目标文件路径。
+            total_size: 文件总大小。
+            pbar: tqdm 进度条实例。
+            speed_meter: 网速统计器。
+            progress_lock: 进度更新锁。
+
+        Returns:
+            bool: 是否全部下载成功。
+        """
+        segments = self._split_segments(total_size, self.download_threads)
+
+        sessions = [requests.Session() for _ in segments]
+        try:
+            with ThreadPoolExecutor(max_workers=len(segments)) as executor:
+                futures = {}
+                for i, segment in enumerate(segments):
+                    future = executor.submit(
+                        self._download_part,
+                        sessions[i],
+                        url,
+                        target_path,
+                        segment,
+                        pbar,
+                        speed_meter,
+                        progress_lock,
+                    )
+                    futures[future] = segment
+
+                for future in as_completed(futures):
+                    if not future.result():
+                        return False
+
+            if not self._merge_parts(target_path, segments):
+                return False
+
+            if target_path.exists() and target_path.stat().st_size == total_size:
+                return True
+            return False
+        finally:
+            for session in sessions:
+                session.close()
+
     def download_file_with_progress(self, url: str, save_path: str) -> bool:
         """下载文件并显示进度条。
 

@@ -16,7 +16,7 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.download_manager import DownloadManager, NetworkSpeedMeter
+from modules.download_manager import DownloadManager, DownloadSegment, NetworkSpeedMeter
 
 
 class TestDownloadFile(unittest.TestCase):
@@ -577,6 +577,115 @@ class TestSingleThreadDownload(unittest.TestCase):
         finally:
             if os.path.exists(path):
                 os.unlink(path)
+
+
+class TestMultithreadDownload(unittest.TestCase):
+    """多线程分段下载测试。"""
+
+    def setUp(self):
+        """初始化测试对象。"""
+        self.logger = logging.getLogger('TestMultithreadDownload')
+        self.logger.setLevel(logging.CRITICAL)
+        self.dm = DownloadManager('', '/tmp', self.logger, download_threads=2)
+
+    def test_download_part_uses_range_and_writes_part_file(self):
+        """分段下载使用 Range 并写入 part 文件。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / 'file.bin'
+            segment = DownloadSegment(index=0, start=0, end=2)
+            response = FakeResponse(
+                status_code=206,
+                headers={'Content-Range': 'bytes 0-2/6'},
+                chunks=[b'abc'],
+            )
+            session = FakeSession(get_responses=[response])
+            pbar = FakeProgressBar()
+
+            result = self.dm._download_part(
+                session,
+                'https://example.com/file.bin',
+                save_path,
+                segment,
+                pbar,
+                NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                Lock(),
+            )
+
+            self.assertTrue(result)
+            self.assertEqual((Path(str(save_path) + '.part0')).read_bytes(), b'abc')
+            _, kwargs = session.get_calls[0]
+            self.assertEqual(kwargs['headers']['Range'], 'bytes=0-2')
+            self.assertEqual(response.iter_content_chunk_sizes, [128 * 1024])
+
+    def test_download_part_retries_when_content_range_mismatch(self):
+        """Content-Range 不一致时不写入并重试。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / 'file.bin'
+            segment = DownloadSegment(index=0, start=0, end=2)
+            bad_response = FakeResponse(
+                status_code=206,
+                headers={'Content-Range': 'bytes 1-3/6'},
+                chunks=[b'bad'],
+            )
+            good_response = FakeResponse(
+                status_code=206,
+                headers={'Content-Range': 'bytes 0-2/6'},
+                chunks=[b'abc'],
+            )
+            session = FakeSession(get_responses=[bad_response, good_response])
+
+            result = self.dm._download_part(
+                session,
+                'https://example.com/file.bin',
+                save_path,
+                segment,
+                FakeProgressBar(),
+                NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                Lock(),
+            )
+
+            self.assertTrue(result)
+            self.assertEqual((Path(str(save_path) + '.part0')).read_bytes(), b'abc')
+            self.assertEqual(len(session.get_calls), 2)
+
+    def test_merge_parts_writes_in_order_and_deletes_parts(self):
+        """part 按顺序合并并在成功后删除。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / 'file.bin'
+            Path(str(save_path) + '.part0').write_bytes(b'abc')
+            Path(str(save_path) + '.part1').write_bytes(b'def')
+            segments = [DownloadSegment(0, 0, 2), DownloadSegment(1, 3, 5)]
+
+            result = self.dm._merge_parts(save_path, segments)
+
+            self.assertTrue(result)
+            self.assertEqual(save_path.read_bytes(), b'abcdef')
+            self.assertFalse(Path(str(save_path) + '.part0').exists())
+            self.assertFalse(Path(str(save_path) + '.part1').exists())
+
+    def test_multithread_download_combines_parts(self):
+        """多线程模式完成后生成目标文件。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / 'file.bin'
+            sessions = [
+                FakeSession(get_responses=[FakeResponse(206, {'Content-Range': 'bytes 0-2/6'}, [b'abc'])]),
+                FakeSession(get_responses=[FakeResponse(206, {'Content-Range': 'bytes 3-5/6'}, [b'def'])]),
+            ]
+
+            with mock.patch('modules.download_manager.requests.Session', side_effect=sessions):
+                result = self.dm._download_multithreaded(
+                    'https://example.com/file.bin',
+                    save_path,
+                    total_size=6,
+                    pbar=FakeProgressBar(),
+                    speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                    progress_lock=Lock(),
+                )
+
+            self.assertTrue(result)
+            self.assertEqual(save_path.read_bytes(), b'abcdef')
+            self.assertEqual(sessions[0].get_calls[0][1]['headers']['Range'], 'bytes=0-2')
+            self.assertEqual(sessions[1].get_calls[0][1]['headers']['Range'], 'bytes=3-5')
 
 
 if __name__ == '__main__':
