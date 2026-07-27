@@ -520,6 +520,39 @@ class TestRunUpdateConfigVersionSelection(unittest.TestCase):
         assistant._updater.restore_config.return_value = True
         return assistant
 
+    def test_run_update_checks_temp_folder_when_no_outdated_folders(self):
+        """所有 M9A 已最新时仍检查临时缓存文件夹。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / 'archive'
+            m9a_folder = Path(tmp) / 'M9A'
+            m9a_folder.mkdir()
+            assistant = self._create_assistant(archive, 'v3.20.0', 'v3.20.0', m9a_folder)
+            assistant.keep_temp = False
+            assistant._collect_outdated_folders.return_value = []
+            assistant._updater.clean_temp_folder.return_value = True
+
+            result = assistant.run_update('v3.20.0')
+
+            self.assertTrue(result)
+            assistant._updater.clean_temp_folder.assert_called_once_with('temp')
+            assistant._cleanup_old_logs.assert_called_once_with()
+
+    def test_run_update_keeps_temp_folder_when_no_outdated_folders_and_keep_temp(self):
+        """所有 M9A 已最新且保留缓存时不清理临时文件夹。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / 'archive'
+            m9a_folder = Path(tmp) / 'M9A'
+            m9a_folder.mkdir()
+            assistant = self._create_assistant(archive, 'v3.20.0', 'v3.20.0', m9a_folder)
+            assistant.keep_temp = True
+            assistant._collect_outdated_folders.return_value = []
+
+            result = assistant.run_update('v3.20.0')
+
+            self.assertTrue(result)
+            assistant._updater.clean_temp_folder.assert_not_called()
+            assistant._cleanup_old_logs.assert_called_once_with()
+
     def test_run_update_does_not_use_removed_deps_methods(self):
         """run_update 不调用 GUI 或 deps 相关方法"""
         with tempfile.TemporaryDirectory() as tmp:

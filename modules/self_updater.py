@@ -1004,11 +1004,15 @@ class SelfUpdater:
             temp_folder: 临时文件夹路径
             logger: 日志记录器
         """
-        cache_dir = Path(temp_folder) / "UpdateCache"
-        if not cache_dir.exists():
+        temp_path = Path(temp_folder)
+        cache_dir = temp_path / "UpdateCache"
+        if not temp_path.exists():
             return
         try:
-            shutil.rmtree(cache_dir)
+            if cache_dir.exists():
+                shutil.rmtree(cache_dir)
+            if not any(temp_path.iterdir()):
+                temp_path.rmdir()
             logger.info(f"已清理自更新缓存: {cache_dir}")
         except OSError as e:
             logger.warning(f"清理自更新缓存失败: {e}")

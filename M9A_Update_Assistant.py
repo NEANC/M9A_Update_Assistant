@@ -283,6 +283,10 @@ class M9AUpdateAssistant:
         outdated_folders = self._collect_outdated_folders(latest_version, force=bool(target_version))
         if not outdated_folders:
             self.logger.info("所有 M9A 已是最新版本，无需更新")
+            if self.keep_temp:
+                self.logger.info("检查到 --not-delete 参数，保留临时文件夹")
+            elif not self._updater.clean_temp_folder(self.config.temp_folder):
+                self.logger.warning("无法清理临时文件夹")
             self._cleanup_old_logs()
             return True
 

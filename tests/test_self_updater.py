@@ -21,6 +21,45 @@ from modules.self_updater import SelfUpdater, _get_existing_retry_count
 from M9A_Update_Assistant import _cleanup_update_residue, _is_safe_recovery_runtime_dir
 
 
+class TestCleanSelfUpdateCache(unittest.TestCase):
+    """clean_self_update_cache 测试"""
+
+    def setUp(self):
+        """准备临时目录和日志记录器。"""
+        self.tmpdir = tempfile.mkdtemp()
+        self.logger = logging.getLogger("TestCleanSelfUpdateCache")
+        self.logger.setLevel(logging.CRITICAL)
+
+    def tearDown(self):
+        """清理测试临时目录。"""
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_removes_empty_temp_folder_after_cache_cleanup(self):
+        """清理 UpdateCache 后应删除空的父级临时文件夹。"""
+        cache_dir = Path(self.tmpdir) / "UpdateCache" / "nested"
+        cache_dir.mkdir(parents=True)
+
+        SelfUpdater.clean_self_update_cache(self.tmpdir, self.logger)
+
+        self.assertFalse(Path(self.tmpdir).exists())
+
+    def test_removes_empty_temp_folder_without_update_cache(self):
+        """UpdateCache 不存在时也应删除空的缓存根目录。"""
+        SelfUpdater.clean_self_update_cache(self.tmpdir, self.logger)
+
+        self.assertFalse(Path(self.tmpdir).exists())
+
+    def test_keeps_temp_folder_when_other_files_exist(self):
+        """缓存根目录含其他文件时不应删除根目录。"""
+        other_file = Path(self.tmpdir) / "keep.txt"
+        other_file.write_text("keep", encoding="utf-8")
+
+        SelfUpdater.clean_self_update_cache(self.tmpdir, self.logger)
+
+        self.assertTrue(Path(self.tmpdir).exists())
+        self.assertTrue(other_file.exists())
+
+
 class TestGetExePath(unittest.TestCase):
     """_get_exe_path 测试"""
 
