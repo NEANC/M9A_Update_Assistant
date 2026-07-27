@@ -220,5 +220,42 @@ class TestDownloadFile(unittest.TestCase):
                 os.unlink(path)
 
 
+class TestDownloadProgressBarFormat(unittest.TestCase):
+    """下载进度条格式测试。"""
+
+    def test_download_progress_bar_uses_postfix_speed_not_tqdm_rate(self):
+        """下载进度条使用 postfix 显示实测速度。"""
+        from modules.progress_bar import DOWNLOAD_BAR_FORMAT
+
+        self.assertIn('{postfix}', DOWNLOAD_BAR_FORMAT)
+        self.assertIn('{remaining}', DOWNLOAD_BAR_FORMAT)
+        self.assertNotIn('{rate_fmt}', DOWNLOAD_BAR_FORMAT)
+
+    @mock.patch('modules.progress_bar.tqdm')
+    def test_create_download_progress_bar_uses_project_style(self, mock_tqdm):
+        """下载进度条由 progress_bar 模块统一创建。"""
+        from modules.progress_bar import DOWNLOAD_BAR_FORMAT
+        from modules.progress_bar import create_download_progress_bar
+
+        create_download_progress_bar(128, '下载 file.zip')
+
+        mock_tqdm.assert_called_once_with(
+            total=128,
+            unit='B',
+            unit_scale=True,
+            unit_divisor=1024,
+            desc='下载 file.zip',
+            bar_format=DOWNLOAD_BAR_FORMAT,
+            disable=False,
+            leave=False,
+        )
+
+    def test_requirements_does_not_contain_pypdl(self):
+        """运行依赖不再包含 Pypdl。"""
+        requirements = Path('requirements.txt').read_text(encoding='utf-8')
+        self.assertNotIn('pypdl', requirements.lower())
+        self.assertIn('requests', requirements.lower())
+
+
 if __name__ == '__main__':
     unittest.main()

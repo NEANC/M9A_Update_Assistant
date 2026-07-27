@@ -28,6 +28,34 @@ BAR_FORMAT = (
     + BAR_RST                                   # 辅助信息结束
 )
 
+DOWNLOAD_BAR_FORMAT = (
+    '{desc}: '
+    + BAR_FG + '{bar}' + BAR_RST + ' '
+    + BAR_AUX
+    + '{n_fmt}/{total_fmt} | ETA: {remaining} | {postfix}'
+    + BAR_RST
+)
+
+
+def create_download_progress_bar(total: int, desc: str, disable: bool = False,
+                                 leave: bool = False) -> tqdm:
+    """创建下载专用 tqdm 进度条。
+
+    Args:
+        total: 总大小（字节）
+        desc: 任务描述
+        disable: 是否禁用
+        leave: 完成后是否保留进度条
+
+    Returns:
+        tqdm 实例
+    """
+    return tqdm(
+        total=total, unit='B', unit_scale=True, unit_divisor=1024,
+        desc=desc, bar_format=DOWNLOAD_BAR_FORMAT, disable=disable,
+        leave=leave,
+    )
+
 
 def create_progress_bar(total: int, desc: str, disable: bool = False,
                         leave: bool = False) -> tqdm:
