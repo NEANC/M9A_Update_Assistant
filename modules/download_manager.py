@@ -204,9 +204,17 @@ class DownloadManager:
                     proxies=self._build_proxies(),
                     stream=True,
                 )
-                response.raise_for_status()
 
                 if response.status_code == 206:
+                    response.raise_for_status()
+                    # 从 Content-Range 推导真实 total 并更新进度条
+                    real_total = self._extract_total_size_from_get_response(
+                        response, existing_size,
+                    )
+                    if real_total > 0:
+                        with progress_lock:
+                            pbar.total = real_total
+                            pbar.refresh()
                     # 续传追加
                     with open(target, 'ab') as f:
                         for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
@@ -219,12 +227,14 @@ class DownloadManager:
                     return True
 
                 elif response.status_code == 200:
-                    # 覆盖从头下载
-                    pbar.n = 0
+                    response.raise_for_status()
+                    # 覆盖从头下载（进度条复位需在锁保护下）
                     content_length = response.headers.get('Content-Length')
-                    if content_length and content_length.isdigit():
-                        pbar.total = int(content_length)
-                    pbar.refresh()
+                    with progress_lock:
+                        pbar.n = 0
+                        if content_length and content_length.isdigit():
+                            pbar.total = int(content_length)
+                        pbar.refresh()
 
                     with open(target, 'wb') as f:
                         for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
@@ -237,8 +247,14 @@ class DownloadManager:
                     return True
 
                 elif response.status_code == 416:
+                    # 416 不在 raise_for_status 覆盖范围，需手动处理
                     if total_size > 0 and target.exists() and target.stat().st_size == total_size:
                         return True
+                    # 416 且文件不完整，相同 Range 头必然再次 416，不重试
+                    return False
+
+                else:
+                    response.raise_for_status()
 
             except requests.RequestException as exc:
                 self.logger.debug(f"下载尝试 {attempt + 1} 失败: {exc}")

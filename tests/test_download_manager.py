@@ -524,6 +524,60 @@ class TestSingleThreadDownload(unittest.TestCase):
         self.assertFalse(result)
         self.assertTrue(pbar.closed)
 
+    def test_single_thread_416_file_complete_returns_true(self):
+        """416 且文件完整时返回 True（早期守卫直接返回，无需发请求）。"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as temp_file:
+            path = temp_file.name
+            temp_file.write(b'data')
+        response = FakeResponse(status_code=416)
+        session = FakeSession(get_responses=[response])
+        pbar = FakeProgressBar()
+
+        try:
+            result = self.dm._download_single_threaded(
+                session,
+                'https://example.com/file.bin',
+                Path(path),
+                total_size=4,
+                pbar=pbar,
+                speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                progress_lock=Lock(),
+            )
+
+            self.assertTrue(result)
+            # 文件已完整，早期守卫直接返回 True，无需发起 GET 请求
+            self.assertEqual(len(session.get_calls), 0)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_single_thread_416_file_incomplete_returns_false_no_retry(self):
+        """416 且文件不完整时立即返回 False 且仅发一次请求。"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as temp_file:
+            path = temp_file.name
+            temp_file.write(b'partial')
+        response = FakeResponse(status_code=416)
+        # 准备 3 个响应（对应 DOWNLOAD_RETRIES），验证不会被消费
+        session = FakeSession(get_responses=[response, response, response])
+        pbar = FakeProgressBar()
+
+        try:
+            result = self.dm._download_single_threaded(
+                session,
+                'https://example.com/file.bin',
+                Path(path),
+                total_size=100,
+                pbar=pbar,
+                speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                progress_lock=Lock(),
+            )
+
+            self.assertFalse(result)
+            self.assertEqual(len(session.get_calls), 1)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
 
 if __name__ == '__main__':
     unittest.main()
