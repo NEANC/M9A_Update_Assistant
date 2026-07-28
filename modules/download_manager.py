@@ -224,6 +224,11 @@ class DownloadManager:
 
                     if total_size == 0:
                         return target.exists() and target.stat().st_size > 0
+                    # I2: 已知总大小时校验最终文件大小
+                    if target.stat().st_size != total_size:
+                        existing_size = target.stat().st_size
+                        headers['Range'] = f'bytes={existing_size}-'
+                        continue
                     return True
 
                 elif response.status_code == 200:
@@ -244,13 +249,20 @@ class DownloadManager:
 
                     if total_size == 0:
                         return target.exists() and target.stat().st_size > 0
+                    # I2: 已知总大小时校验最终文件大小
+                    if target.stat().st_size != total_size:
+                        existing_size = target.stat().st_size
+                        headers['Range'] = f'bytes={existing_size}-'
+                        continue
                     return True
 
                 elif response.status_code == 416:
                     # 416 不在 raise_for_status 覆盖范围，需手动处理
                     if total_size > 0 and target.exists() and target.stat().st_size == total_size:
+                        response.close()
                         return True
                     # 416 且文件不完整，相同 Range 头必然再次 416，不重试
+                    response.close()
                     return False
 
                 else:
@@ -258,6 +270,14 @@ class DownloadManager:
 
             except requests.RequestException as exc:
                 self.logger.debug(f"下载尝试 {attempt + 1} 失败: {exc}")
+
+            # I1: 重试前重新读取文件大小，更新 Range 偏移，避免数据重复/错位
+            existing_size = target.stat().st_size if target.exists() else 0
+            if total_size > 0 and existing_size >= total_size:
+                existing_size = 0
+            headers['Range'] = f'bytes={existing_size}-' if existing_size > 0 else ''
+            if existing_size == 0 and 'Range' in headers:
+                del headers['Range']
 
             if attempt < DOWNLOAD_RETRIES - 1:
                 time.sleep(1)

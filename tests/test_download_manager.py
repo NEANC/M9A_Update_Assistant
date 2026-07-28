@@ -51,6 +51,10 @@ class FakeResponse:
         for chunk in self.chunks:
             yield chunk
 
+    def close(self):
+        """关闭响应体。"""
+        pass
+
 
 class FakeSession:
     """requests Session 替身。"""
