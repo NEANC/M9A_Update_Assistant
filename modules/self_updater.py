@@ -28,6 +28,7 @@ from modules.ps1_fragments import (
     generate_move_with_retry_ps1,
     generate_sha256_function_ps1,
 )
+from modules.version import VERSION
 from modules.zip_manager import ZipManager
 
 
@@ -843,10 +844,7 @@ class SelfUpdater:
         shutil.copy2(tmp_path, new_exe)
         self.logger.info(f"新版本已暂存: {new_exe}")
 
-        try:
-            from modules.version import VERSION as old_version
-        except ImportError:
-            old_version = ""
+        old_version = VERSION
 
         state = UpdateState()
         state["state"] = "downloaded_verified"
@@ -944,21 +942,12 @@ class SelfUpdater:
             )
             return 2
 
-        from modules.version import VERSION as actual_version
-        if new_version and actual_version != new_version:
+        if new_version and VERSION != new_version:
             logger.critical(
                 f"版本号不匹配: \n"
                 f"GitHub: {new_version}\n"
-                f"本地:   {actual_version}")
+                f"本地:   {VERSION}")
             return 3
-
-        try:
-            from modules.config_manager import ConfigManager
-            from modules.github_release_client import GitHubReleaseClient
-            from modules.download_manager import DownloadManager
-        except ImportError as e:
-            logger.critical(f"核心模块导入失败: {e}")
-            return 4
 
         logger.info("新版验证全部通过")
         return 0

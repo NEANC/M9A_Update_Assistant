@@ -335,6 +335,36 @@ class TestDownloadFileIntegration(unittest.TestCase):
             self.assertTrue(result)
             self.assertEqual(save_path.read_bytes(), b'abcdef')
 
+    def test_multithread_progress_bar_counts_part_file_bytes(self):
+        """多线程进度条初始化时计入既有 part 文件字节数。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / 'file.bin'
+            part0_path = Path(str(save_path) + '.part0')
+            part1_path = Path(str(save_path) + '.part1')
+            # part 文件已完整，下载阶段将直接跳过，仅执行合并
+            part0_path.write_bytes(b'abc')
+            part1_path.write_bytes(b'def')
+
+            metadata_session = FakeSession(
+                head_response=FakeResponse(headers={'Content-Length': '6', 'Accept-Ranges': 'bytes'}),
+            )
+            # 分段完整时不会有 GET 请求，空列表即可
+            part_sessions = [FakeSession(get_responses=[]), FakeSession(get_responses=[])]
+            pbar = FakeProgressBar()
+            dm = DownloadManager('', temp_dir, self.logger, download_threads=2)
+
+            with mock.patch('modules.download_manager.requests.Session', side_effect=[metadata_session] + part_sessions), \
+                    mock.patch('modules.download_manager.create_download_progress_bar', return_value=pbar):
+                result = dm.download_file_with_progress('https://example.com/file.bin', str(save_path))
+
+            self.assertTrue(result)
+            self.assertEqual(save_path.read_bytes(), b'abcdef')
+            # 初始化时 part0(abc=3) + part1(def=3) = 6 字节，且无增量下载
+            self.assertEqual(pbar.n, 6)
+            # 分段完整无需发起 GET 请求
+            for session in part_sessions:
+                self.assertEqual(len(session.get_calls), 0)
+
     def test_download_file_passes_proxy_to_requests(self):
         """代理参数传递给 requests。"""
         with tempfile.TemporaryDirectory() as temp_dir:

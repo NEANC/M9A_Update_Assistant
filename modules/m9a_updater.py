@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from modules.progress_bar import create_progress_bar, format_ok, format_error
+from modules.zip_manager import ZipManager
 
 
 VersionKey = Tuple[int, int, int, int, int]
@@ -417,8 +418,6 @@ class M9AUpdater:
         Returns:
             找到的 ZIP 文件路径，如果未找到则返回 None。
         """
-        from modules.zip_manager import ZipManager
-
         cli_zip_regex = gh_client.compile_pattern(cli_zip_pattern)
         search_dirs = [Path(temp_folder) / "ZIP", Path(temp_folder), Path.cwd()]
         all_zips = []

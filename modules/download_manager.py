@@ -3,7 +3,6 @@
 
 import logging
 import time
-
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
