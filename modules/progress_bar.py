@@ -32,9 +32,25 @@ DOWNLOAD_BAR_FORMAT = (
     '{desc}: '
     + BAR_FG + '{bar}' + BAR_RST + ' '
     + BAR_AUX
-    + '{n_fmt}/{total_fmt} | ETA: {remaining} | {postfix}'
+    + '{n_fmt}/{total_fmt} | ETA: {remaining} | {download_rate_fmt}'
     + BAR_RST
 )
+
+
+class DownloadProgressBar(tqdm):
+    """下载专用 tqdm 进度条，使用外部传入的网络速度字段。"""
+
+    def __init__(self, *args, **kwargs):
+        """初始化下载进度条。"""
+        self.download_rate_fmt = ''
+        super().__init__(*args, **kwargs)
+
+    @property
+    def format_dict(self):
+        """向 tqdm 格式模板注入下载速度字段。"""
+        data = super().format_dict
+        data['download_rate_fmt'] = self.download_rate_fmt
+        return data
 
 
 def create_download_progress_bar(total: int, desc: str, disable: bool = False,
@@ -50,7 +66,7 @@ def create_download_progress_bar(total: int, desc: str, disable: bool = False,
     Returns:
         tqdm 实例
     """
-    return tqdm(
+    return DownloadProgressBar(
         total=total, unit='B', unit_scale=True, unit_divisor=1024,
         desc=desc, bar_format=DOWNLOAD_BAR_FORMAT, disable=disable,
         leave=leave,

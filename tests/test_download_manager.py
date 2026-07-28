@@ -144,33 +144,48 @@ class TestDownloadManagerHelpers(unittest.TestCase):
         self.assertEqual(self.dm._format_speed(2048), '2.00KiB/s')
         self.assertEqual(self.dm._format_speed(2 * 1024 * 1024), '2.00MiB/s')
 
+    def test_update_progress_sets_custom_rate_without_tqdm_comma_prefix(self):
+        """下载速度显示不触发 tqdm postfix 逗号前缀。"""
+        pbar = FakeProgressBar()
+        times = iter([0, 1])
+
+        self.dm._update_progress(
+            pbar,
+            Lock(),
+            NetworkSpeedMeter(time_func=lambda: next(times)),
+            1024 * 1024,
+        )
+
+        self.assertEqual(pbar.download_rate_fmt, '1.00MiB/s')
+        self.assertEqual(pbar.postfixes, [])
+
 
 class TestDownloadProgressBarFormat(unittest.TestCase):
     """下载进度条格式测试。"""
 
-    def test_download_progress_bar_uses_postfix_speed_not_tqdm_rate(self):
-        """下载进度条使用 postfix 显示实测速度。"""
+    def test_download_progress_bar_uses_custom_rate_not_postfix(self):
+        """下载进度条使用自定义速度字段显示实测速度。"""
         from modules.progress_bar import DOWNLOAD_BAR_FORMAT
 
-        self.assertIn('{postfix}', DOWNLOAD_BAR_FORMAT)
+        self.assertIn('{download_rate_fmt}', DOWNLOAD_BAR_FORMAT)
         self.assertIn('{remaining}', DOWNLOAD_BAR_FORMAT)
-        self.assertNotIn('{rate_fmt}', DOWNLOAD_BAR_FORMAT)
+        self.assertNotIn('{postfix}', DOWNLOAD_BAR_FORMAT)
 
-    def test_download_bar_format_does_not_use_rate_fmt(self):
-        """下载进度条不使用 tqdm 推导速度字段。"""
+    def test_download_bar_format_does_not_use_postfix(self):
+        """下载进度条不使用 tqdm postfix 字段。"""
         from modules.progress_bar import DOWNLOAD_BAR_FORMAT
 
-        self.assertNotIn('{rate_fmt}', DOWNLOAD_BAR_FORMAT)
+        self.assertNotIn('{postfix}', DOWNLOAD_BAR_FORMAT)
 
-    @mock.patch('modules.progress_bar.tqdm')
-    def test_create_download_progress_bar_uses_project_style(self, mock_tqdm):
+    @mock.patch('modules.progress_bar.DownloadProgressBar')
+    def test_create_download_progress_bar_uses_project_style(self, mock_progress_bar):
         """下载进度条由 progress_bar 模块统一创建。"""
         from modules.progress_bar import DOWNLOAD_BAR_FORMAT
         from modules.progress_bar import create_download_progress_bar
 
         create_download_progress_bar(128, '下载 file.zip')
 
-        mock_tqdm.assert_called_once_with(
+        mock_progress_bar.assert_called_once_with(
             total=128,
             unit='B',
             unit_scale=True,
@@ -197,6 +212,9 @@ class FakeProgressBar:
         self.total = None
         self.updates = []
         self.postfixes = []
+        self.postfix = ''
+        self.rate_fmt = ''
+        self.download_rate_fmt = ''
         self.closed = False
         self.refresh_count = 0
 

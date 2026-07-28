@@ -157,7 +157,7 @@ class DownloadManager:
         with progress_lock:
             speed = speed_meter.update(byte_count)
             pbar.update(byte_count)
-            pbar.set_postfix_str(self._format_speed(speed), refresh=False)
+            pbar.download_rate_fmt = self._format_speed(speed)
             pbar.refresh()
 
     def _download_single_threaded(self, session, url: str, target_path: Path,
