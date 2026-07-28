@@ -29,13 +29,17 @@ class FakeResponse:
         self.chunks = chunks or []
         self.error = error
         self.iter_content_chunk_sizes = []
+        self.entered = False
+        self.closed = False
 
     def __enter__(self):
         """进入上下文。"""
+        self.entered = True
         return self
 
     def __exit__(self, exc_type, exc, traceback):
         """退出上下文。"""
+        self.closed = True
         return False
 
     def raise_for_status(self):
@@ -53,7 +57,7 @@ class FakeResponse:
 
     def close(self):
         """关闭响应体。"""
-        pass
+        self.closed = True
 
 
 class FakeSession:
@@ -117,6 +121,8 @@ class TestDownloadManagerHelpers(unittest.TestCase):
         _, kwargs = session.head_calls[0]
         self.assertEqual(kwargs['timeout'], (15, 60))
         self.assertEqual(kwargs['headers']['User-Agent'], 'M9A-Update-Assistant')
+        self.assertTrue(session.head_response.entered)
+        self.assertTrue(session.head_response.closed)
 
     def test_get_download_metadata_falls_back_when_head_fails(self):
         """HEAD 失败时返回未知大小并禁用 Range。"""
@@ -639,6 +645,44 @@ class TestMultithreadDownload(unittest.TestCase):
 
             self.assertTrue(result)
             self.assertEqual((Path(str(save_path) + '.part0')).read_bytes(), b'abc')
+            self.assertEqual(len(session.get_calls), 2)
+            self.assertTrue(bad_response.closed)
+            self.assertTrue(good_response.closed)
+
+    def test_download_part_content_range_mismatch_keeps_fact_progress(self):
+        """Content-Range 不一致后重下不重复计算既有 part 进度。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / 'file.bin'
+            segment = DownloadSegment(index=0, start=0, end=5)
+            part_path = Path(str(save_path) + '.part0')
+            part_path.write_bytes(b'abc')
+            bad_response = FakeResponse(
+                status_code=206,
+                headers={'Content-Range': 'bytes 0-5/6'},
+                chunks=[b'bad'],
+            )
+            good_response = FakeResponse(
+                status_code=206,
+                headers={'Content-Range': 'bytes 0-5/6'},
+                chunks=[b'abcdef'],
+            )
+            session = FakeSession(get_responses=[bad_response, good_response])
+            pbar = FakeProgressBar()
+            pbar.n = 3
+
+            result = self.dm._download_part(
+                session,
+                'https://example.com/file.bin',
+                save_path,
+                segment,
+                pbar,
+                NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                Lock(),
+            )
+
+            self.assertTrue(result)
+            self.assertEqual(part_path.read_bytes(), b'abcdef')
+            self.assertEqual(pbar.n, 6)
             self.assertEqual(len(session.get_calls), 2)
 
     def test_merge_parts_writes_in_order_keeps_parts(self):

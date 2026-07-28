@@ -97,24 +97,26 @@ class DownloadManager:
     def _get_download_metadata(self, session, url: str) -> DownloadMetadata:
         """通过 HEAD 获取下载元数据。"""
         try:
-            response = session.head(
+            with session.head(
                 url,
                 headers={'User-Agent': USER_AGENT},
                 timeout=DOWNLOAD_TIMEOUT,
                 proxies=self._build_proxies(),
                 allow_redirects=True,
-            )
-            response.raise_for_status()
+            ) as response:
+                response.raise_for_status()
+                try:
+                    total_size = int(response.headers.get('Content-Length', '0'))
+                except ValueError:
+                    total_size = 0
+                supports_range = response.headers.get('Accept-Ranges', '').lower() == 'bytes'
+                return DownloadMetadata(
+                    total_size=max(total_size, 0),
+                    supports_range=supports_range,
+                )
         except requests.RequestException as exc:
             self.logger.debug(f"HEAD 探测失败，降级单线程下载: {exc}")
             return DownloadMetadata(total_size=0, supports_range=False)
-
-        try:
-            total_size = int(response.headers.get('Content-Length', '0'))
-        except ValueError:
-            total_size = 0
-        supports_range = response.headers.get('Accept-Ranges', '').lower() == 'bytes'
-        return DownloadMetadata(total_size=max(total_size, 0), supports_range=supports_range)
 
     def _split_segments(self, total_size: int, threads: int) -> list[DownloadSegment]:
         """将文件大小拆分为闭区间分段。"""
@@ -389,6 +391,10 @@ class DownloadManager:
                         if not self._content_range_matches(segment, range_start, response.headers):
                             part_path = self._get_part_path(save_path, segment.index)
                             if part_path.exists():
+                                if valid_size > 0:
+                                    with progress_lock:
+                                        pbar.n = max(0, pbar.n - valid_size)
+                                        pbar.refresh()
                                 part_path.unlink()
                             range_start = segment.start
                             valid_size = 0
