@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
+import inspect
 import logging
 import os
 import sys
@@ -169,6 +170,23 @@ class TestDownloadProgressBarFormat(unittest.TestCase):
 
         self.assertIn('{download_rate_fmt}', DOWNLOAD_BAR_FORMAT)
         self.assertIn('{remaining}', DOWNLOAD_BAR_FORMAT)
+        self.assertNotIn('{postfix}', DOWNLOAD_BAR_FORMAT)
+
+    def test_download_bar_format_is_project_style_with_custom_rate(self):
+        """下载进度条复用普通进度条布局并替换速度字段。"""
+        import modules.progress_bar as progress_bar
+        from modules.progress_bar import BAR_FORMAT
+        from modules.progress_bar import DOWNLOAD_BAR_FORMAT
+
+        expected_format = BAR_FORMAT.replace('{rate_fmt}', '{download_rate_fmt}')
+        progress_bar_source = inspect.getsource(progress_bar)
+        download_format_source = progress_bar_source.split('DOWNLOAD_BAR_FORMAT =', 1)[1]
+        download_format_source = download_format_source.split('class DownloadProgressBar', 1)[0]
+
+        self.assertEqual(DOWNLOAD_BAR_FORMAT, expected_format)
+        self.assertIn('BAR_FORMAT.replace', download_format_source)
+        self.assertIn('{download_rate_fmt}', DOWNLOAD_BAR_FORMAT)
+        self.assertNotIn('{rate_fmt}', DOWNLOAD_BAR_FORMAT)
         self.assertNotIn('{postfix}', DOWNLOAD_BAR_FORMAT)
 
     def test_download_bar_format_does_not_use_postfix(self):

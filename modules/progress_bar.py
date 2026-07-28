@@ -28,13 +28,7 @@ BAR_FORMAT = (
     + BAR_RST                                   # 辅助信息结束
 )
 
-DOWNLOAD_BAR_FORMAT = (
-    '{desc}: '
-    + BAR_FG + '{bar}' + BAR_RST + ' '
-    + BAR_AUX
-    + '{n_fmt}/{total_fmt} | ETA: {remaining} | {download_rate_fmt}'
-    + BAR_RST
-)
+DOWNLOAD_BAR_FORMAT = BAR_FORMAT.replace('{rate_fmt}', '{download_rate_fmt}')
 
 
 class DownloadProgressBar(tqdm):
