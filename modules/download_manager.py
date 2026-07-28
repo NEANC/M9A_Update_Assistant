@@ -623,6 +623,9 @@ class DownloadManager:
 
             if success:
                 downloaded_size = target.stat().st_size
+                if pbar is not None:
+                    pbar.close()
+                    pbar = None
                 print(format_ok("下载", file_name, save_path, downloaded_size))
                 self.logger.debug(
                     f"下载完成，文件大小: {downloaded_size / (1024 * 1024):.2f} MB，"

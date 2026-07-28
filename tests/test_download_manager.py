@@ -206,8 +206,9 @@ class TestDownloadProgressBarFormat(unittest.TestCase):
 class FakeProgressBar:
     """tqdm 进度条替身。"""
 
-    def __init__(self):
+    def __init__(self, events=None):
         """初始化进度条替身。"""
+        self.events = events if events is not None else []
         self.n = 0
         self.total = None
         self.updates = []
@@ -233,6 +234,7 @@ class FakeProgressBar:
 
     def close(self):
         """记录关闭。"""
+        self.events.append('close')
         self.closed = True
 
 
@@ -269,6 +271,31 @@ class TestDownloadFileIntegration(unittest.TestCase):
             self.assertEqual(save_path.read_bytes(), b'abcdef')
             self.assertTrue(pbar.closed)
             self.assertEqual(session.get_calls[0][1]['headers']['User-Agent'], 'M9A-Update-Assistant')
+
+    def test_download_file_closes_progress_before_success_message(self):
+        """成功消息输出前先关闭进度条，避免粘连在同一行。"""
+        events = []
+        pbar = FakeProgressBar(events)
+
+        def fake_print(*args, **kwargs):
+            """记录成功消息输出顺序。"""
+            events.append('print')
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / 'file.bin'
+            session = FakeSession(
+                head_response=FakeResponse(headers={'Content-Length': '3'}),
+                get_responses=[FakeResponse(200, {'Content-Length': '3'}, [b'abc'])],
+            )
+            dm = DownloadManager('', temp_dir, self.logger, download_threads=1)
+
+            with mock.patch('modules.download_manager.requests.Session', return_value=session), \
+                    mock.patch('modules.download_manager.create_download_progress_bar', return_value=pbar), \
+                    mock.patch('builtins.print', side_effect=fake_print):
+                result = dm.download_file_with_progress('https://example.com/file.bin', str(save_path))
+
+        self.assertTrue(result)
+        self.assertEqual(events, ['close', 'print'])
 
     def test_download_file_uses_multithread_when_range_supported(self):
         """HEAD 支持 Range 时集成入口使用多线程下载。"""
