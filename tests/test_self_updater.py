@@ -847,6 +847,35 @@ class TestSelfUpdateVerify(unittest.TestCase):
         code = SelfUpdater.self_update_verify()
         self.assertEqual(code, 0)
 
+    @mock.patch('modules.self_updater.SelfUpdater._get_exe_path')
+    @mock.patch('modules.self_updater.importlib.import_module')
+    def test_core_module_import_failure_returns_4(self, mock_import_module, mock_exe_path):
+        """SHA256 和版本号通过后，核心模块导入失败返回 4。"""
+        from modules.zip_manager import ZipManager
+        from modules.version import VERSION
+
+        exe_path = os.path.join(self.tmpdir, "test_app.exe")
+        Path(exe_path).write_text("binary content")
+        mock_exe_path.return_value = Path(exe_path)
+
+        actual_sha = ZipManager.calculate_sha256(exe_path)
+        state = UpdateState()
+        state["new_sha256"] = actual_sha
+        state["new_version"] = VERSION
+        state.save()
+
+        def fake_import_module(name):
+            """模拟核心模块导入失败。"""
+            if name == 'modules.download_manager':
+                raise ImportError('模拟导入失败')
+            return object()
+
+        mock_import_module.side_effect = fake_import_module
+
+        code = SelfUpdater.self_update_verify()
+
+        self.assertEqual(code, 4)
+
 
 class TestCleanupUpdateResidue(unittest.TestCase):
     """_cleanup_update_residue 测试"""
