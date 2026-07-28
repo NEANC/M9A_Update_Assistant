@@ -6,7 +6,7 @@ import re
 import time
 import requests
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
 
 class GitHubReleaseClient:
