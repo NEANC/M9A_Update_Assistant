@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from modules.progress_bar import tqdm, BAR_FORMAT, format_ok, format_error
+from modules.progress_bar import create_progress_bar, format_ok, format_error
 
 
 VersionKey = Tuple[int, int, int, int, int]
@@ -196,8 +196,7 @@ class M9AUpdater:
         pbar = None
         try:
             dst.mkdir(parents=True, exist_ok=True)
-            pbar = tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
-                       desc=desc, bar_format=BAR_FORMAT, leave=False)
+            pbar = create_progress_bar(total=total_size, desc=desc)
             for file_src, file_dst in files_to_copy:
                 file_dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(file_src, file_dst)

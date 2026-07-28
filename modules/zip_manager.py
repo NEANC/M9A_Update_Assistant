@@ -12,7 +12,7 @@ from typing import Dict, Optional
 
 from modules.github_release_client import GitHubReleaseClient
 from modules.progress_bar import (
-    tqdm, BAR_FORMAT,
+    create_progress_bar,
     format_ok, format_error,
 )
 
@@ -163,8 +163,10 @@ class ZipManager:
                 self.logger.info(f"开始解压: {zip_path}")
                 self.logger.debug(f"文件数量: {len(file_list)}, 总大小: {total_size / (1024 * 1024):.2f} MB")
 
-                with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
-                           desc="解压", bar_format=BAR_FORMAT, leave=False) as pbar:
+                with create_progress_bar(
+                    total=total_size,
+                    desc=f"解压 {Path(zip_path).name}",
+                ) as pbar:
                     try:
                         for file_info in zip_ref.infolist():
                             zip_ref.extract(file_info, extract_to)

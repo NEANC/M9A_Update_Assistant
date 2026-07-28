@@ -24,6 +24,40 @@ from modules.m9a_updater import (
 )
 
 
+class TestCopyTreeProgressBar(unittest.TestCase):
+    """目录拷贝进度条测试。"""
+
+    def setUp(self):
+        """初始化测试对象。"""
+        self.logger = logging.getLogger("TestM9ACopy")
+        self.logger.setLevel(logging.CRITICAL)
+
+    @mock.patch('modules.m9a_updater.create_progress_bar')
+    def test_copy_tree_progress_bar_uses_unified_factory(self, mock_create_progress_bar):
+        """目录拷贝进度条使用统一工厂和完整描述。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = Path(tmpdir) / 'src'
+            dst = Path(tmpdir) / 'dst'
+            src.mkdir()
+            (src / 'config.json').write_text('abc', encoding='utf-8')
+            mock_pbar = mock_create_progress_bar.return_value
+
+            result = M9AUpdater._copy_tree_with_progress(
+                src,
+                dst,
+                '备份 Z-M9A/config',
+                self.logger,
+            )
+
+            self.assertTrue(result)
+            mock_create_progress_bar.assert_called_once_with(
+                total=3,
+                desc='备份 Z-M9A/config',
+            )
+            mock_pbar.update.assert_called_once_with(3)
+            mock_pbar.close.assert_called_once()
+
+
 class TestParseVersionToTuple(unittest.TestCase):
     """_parse_version_to_tuple 函数测试"""
 

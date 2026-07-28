@@ -10,6 +10,7 @@ import unittest
 import zipfile
 
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -262,6 +263,26 @@ class TestExtractZip(unittest.TestCase):
             self.assertTrue(result)
             self.assertTrue(os.path.exists(os.path.join(extract_dir, 'file1.txt')))
             self.assertTrue(os.path.exists(os.path.join(extract_dir, 'sub/file2.txt')))
+
+    @mock.patch('modules.zip_manager.create_progress_bar')
+    def test_extract_progress_bar_desc_includes_zip_name(self, mock_create_progress_bar):
+        """解压进度条描述包含 ZIP 文件名。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = os.path.join(tmpdir, 'test.zip')
+            with zipfile.ZipFile(zip_path, 'w') as zf:
+                zf.writestr('file1.txt', 'content1')
+
+            extract_dir = os.path.join(tmpdir, 'out')
+            mock_pbar = mock_create_progress_bar.return_value.__enter__.return_value
+
+            result = self.zip_mgr.extract_zip_with_progress(zip_path, extract_dir)
+
+            self.assertTrue(result)
+            mock_create_progress_bar.assert_called_once_with(
+                total=len('content1'),
+                desc='解压 test.zip',
+            )
+            mock_pbar.update.assert_called_once_with(len('content1'))
 
     def test_extract_nonexistent_zip(self):
         """解压不存在的文件"""
