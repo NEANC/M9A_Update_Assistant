@@ -390,6 +390,67 @@ class TestSingleThreadDownload(unittest.TestCase):
             if os.path.exists(path):
                 os.unlink(path)
 
+    def test_single_thread_200_updates_known_total_from_content_length(self):
+        """HEAD 失败时 GET 200 的 Content-Length 更新用于校验的 known_total。"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as temp_file:
+            path = temp_file.name
+        os.unlink(path)
+        response = FakeResponse(status_code=200, headers={'Content-Length': '6'}, chunks=[b'abc', b'def'])
+        session = FakeSession(get_responses=[response])
+        pbar = FakeProgressBar()
+
+        try:
+            result = self.dm._download_single_threaded(
+                session,
+                'https://example.com/file.bin',
+                Path(path),
+                total_size=0,  # HEAD 失败，入参未知
+                pbar=pbar,
+                speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                progress_lock=Lock(),
+            )
+
+            self.assertTrue(result)
+            self.assertEqual(Path(path).read_bytes(), b'abcdef')
+            # 验证 pbar.total 被更新为 Content-Length
+            self.assertEqual(pbar.total, 6)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_single_thread_206_updates_known_total_from_content_range(self):
+        """HEAD 失败时 GET 206 的 Content-Range total 更新用于校验的 known_total。"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as temp_file:
+            path = temp_file.name
+            temp_file.write(b'abc')
+        response = FakeResponse(
+            status_code=206,
+            headers={'Content-Range': 'bytes 3-5/6'},
+            chunks=[b'def'],
+        )
+        session = FakeSession(get_responses=[response])
+        pbar = FakeProgressBar()
+        pbar.n = 3
+
+        try:
+            result = self.dm._download_single_threaded(
+                session,
+                'https://example.com/file.bin',
+                Path(path),
+                total_size=0,  # HEAD 失败，入参未知
+                pbar=pbar,
+                speed_meter=NetworkSpeedMeter(time_func=lambda: time.monotonic()),
+                progress_lock=Lock(),
+            )
+
+            self.assertTrue(result)
+            self.assertEqual(Path(path).read_bytes(), b'abcdef')
+            # 验证 pbar.total 被更新为 Content-Range 的 total
+            self.assertEqual(pbar.total, 6)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
     def test_single_thread_closes_progress_when_integrated_download_fails(self):
         """集成入口失败时关闭进度条。"""
         pbar = FakeProgressBar()
@@ -430,13 +491,13 @@ class TestSingleThreadDownload(unittest.TestCase):
             if os.path.exists(path):
                 os.unlink(path)
 
-    def test_single_thread_416_file_incomplete_returns_false_no_retry(self):
-        """416 且文件不完整时立即返回 False 且仅发一次请求。"""
+    def test_single_thread_416_file_incomplete_retries(self):
+        """416 且文件不完整时进入重试（最多 3 次请求）。"""
         with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as temp_file:
             path = temp_file.name
             temp_file.write(b'partial')
         response = FakeResponse(status_code=416)
-        # 准备 3 个响应（对应 DOWNLOAD_RETRIES），验证不会被消费
+        # 准备 3 个响应，验证重试循环会发起 3 次请求
         session = FakeSession(get_responses=[response, response, response])
         pbar = FakeProgressBar()
 
@@ -452,7 +513,7 @@ class TestSingleThreadDownload(unittest.TestCase):
             )
 
             self.assertFalse(result)
-            self.assertEqual(len(session.get_calls), 1)
+            self.assertEqual(len(session.get_calls), 3)
         finally:
             if os.path.exists(path):
                 os.unlink(path)
@@ -485,12 +546,12 @@ class TestSingleThreadDownload(unittest.TestCase):
                 os.unlink(path)
 
     def test_single_thread_unknown_size_416_is_failure(self):
-        """未知总大小收到 416 不视为成功。"""
+        """未知总大小收到 416 不视为成功，进入重试（最多 3 次）。"""
         with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as temp_file:
             path = temp_file.name
         os.unlink(path)
         response = FakeResponse(status_code=416)
-        session = FakeSession(get_responses=[response])
+        session = FakeSession(get_responses=[response, response, response])
         pbar = FakeProgressBar()
 
         try:
@@ -505,7 +566,7 @@ class TestSingleThreadDownload(unittest.TestCase):
             )
 
             self.assertFalse(result)
-            self.assertEqual(len(session.get_calls), 1)
+            self.assertEqual(len(session.get_calls), 3)
         finally:
             if os.path.exists(path):
                 os.unlink(path)
