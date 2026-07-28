@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
+import importlib
 import logging
 import os
 import re
@@ -948,6 +949,16 @@ class SelfUpdater:
                 f"GitHub: {new_version}\n"
                 f"本地:   {VERSION}")
             return 3
+
+        try:
+            for module_name in (
+                    'modules.config_manager',
+                    'modules.github_release_client',
+                    'modules.download_manager'):
+                importlib.import_module(module_name)
+        except ImportError as e:
+            logger.critical(f"核心模块导入失败: {e}")
+            return 4
 
         logger.info("新版验证全部通过")
         return 0
