@@ -508,6 +508,38 @@ class TestCheckSelfUpdate(unittest.TestCase):
                                 # force=True bypasses _version_newer_than
                                 mock_vnt.assert_not_called()
 
+    @mock.patch('modules.self_updater.requests.get')
+    @mock.patch('modules.self_updater.SelfUpdater.detect_package_type')
+    def test_cleans_empty_temp_folder_when_update_cache_has_no_files(
+            self, mock_detect, mock_get):
+        """自更新提前结束且缓存目录无文件时，应删除空 temp_folder。"""
+        mock_detect.return_value = (True, 'Nuitka')
+        mock_response = mock.MagicMock()
+        mock_response.json.return_value = [{
+            'tag_name': 'v2.0.0',
+            'draft': False,
+            'assets': [{
+                'name': 'M9A_Update_Assistant-Nuitka-v2.0.0.exe',
+                'browser_download_url': 'https://url/exe',
+            }],
+        }]
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        gh = mock.MagicMock()
+        gh.get_asset_sha256.return_value = ''
+        gh.get_exe_sha256_from_body.return_value = ''
+        dm = mock.MagicMock()
+        zm = mock.MagicMock()
+
+        with mock.patch.object(self.su, '_check_system_environment', return_value=True):
+            result = self.su.check_self_update(
+                'v1.0.0', gh, dm, zm, force=True,
+            )
+
+        self.assertFalse(result)
+        self.assertFalse(Path(self.tmpdir).exists())
+
     def test_force_without_special_args_defaults_false(self):
         """不传 force 参数时默认为 False"""
         # 直接从函数签名验证

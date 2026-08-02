@@ -539,6 +539,8 @@ class SelfUpdater:
         except Exception as e:
             self.logger.critical(f"检查软件更新时出错: {e}")
             return False
+        finally:
+            self._cleanup_empty_temp_folder(self.temp_folder, self.logger)
 
     def _match_asset(self, release_info, package_type: str) -> Tuple[str, str]:
         """严格匹配 asset：正则校验命名格式，Nuitka 优先，PyInstaller 回退"""
@@ -994,6 +996,23 @@ class SelfUpdater:
         except OSError as e:
             logger.critical(f"回滚失败: {e}")
             return False
+
+    @staticmethod
+    def _cleanup_empty_temp_folder(temp_folder: str, logger: logging.Logger) -> None:
+        """当临时目录中没有任何文件时，删除空目录链。"""
+        if not temp_folder:
+            return
+        temp_path = Path(temp_folder)
+        if not temp_path.exists():
+            return
+        try:
+            has_file = any(path.is_file() for path in temp_path.rglob('*'))
+            if has_file:
+                return
+            shutil.rmtree(temp_path)
+            logger.info(f"已清理空自更新临时目录: {temp_path}")
+        except OSError as e:
+            logger.warning(f"清理空自更新临时目录失败: {e}")
 
     @staticmethod
     def clean_self_update_cache(temp_folder: str, logger: logging.Logger) -> None:
