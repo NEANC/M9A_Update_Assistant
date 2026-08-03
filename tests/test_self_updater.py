@@ -16,6 +16,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from modules.config_manager import ConfigManager
 from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater, _get_existing_retry_count
 from modules.version import VERSION
@@ -917,6 +918,25 @@ class TestSelfUpdateVerify(unittest.TestCase):
 class TestM9AUpdateAssistantSelfUpdate(unittest.TestCase):
     """M9AUpdateAssistant 自更新编排测试。"""
 
+    def setUp(self):
+        """准备临时目录、切换工作目录并隔离状态文件。"""
+        _suppress_logs()
+        self.tmpdir = tempfile.mkdtemp()
+        self.original_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+        self.original_argv0 = sys.argv[0]
+        sys.argv[0] = os.path.join(self.tmpdir, "test_app.exe")
+        # 预生成配置文件，避免 ConfigManager.load 走"生成默认配置并退出"分支
+        Path(self.tmpdir, 'config.ini').write_text(
+            ConfigManager._build_default_config(), encoding='utf-8')
+
+    def tearDown(self):
+        """恢复工作目录与 argv[0]，清理状态文件和临时目录。"""
+        os.chdir(self.original_cwd)
+        sys.argv[0] = self.original_argv0
+        _cleanup_state_file()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
     def test_check_self_update_passes_keep_temp_to_self_updater(self):
         """自更新检查应把 --not-delete 状态传给 SelfUpdater。"""
         assistant = object.__new__(M9AUpdateAssistant)
@@ -945,6 +965,34 @@ class TestM9AUpdateAssistantSelfUpdate(unittest.TestCase):
             package_type='Nuitka',
             keep_temp=True,
             threads='8',
+        )
+
+    def test_check_self_update_without_restart_threads_set_does_not_raise(self):
+        """未显式设置 restart_threads 时调用 check_self_update() 不应崩溃。"""
+        assistant = M9AUpdateAssistant(os.path.join(self.tmpdir, 'config.ini'))
+        assistant._self_update = mock.MagicMock()
+        assistant._self_update.check_self_update.return_value = True
+        assistant._github = mock.MagicMock()
+        assistant._download = mock.MagicMock()
+        assistant._zip = mock.MagicMock()
+        assistant._is_bundled = True
+        assistant._package_type = 'Nuitka'
+        assistant.keep_temp = True
+        # 注意：不显式设置 restart_threads，依赖 __init__ 提供的默认值
+
+        result = assistant.check_self_update(force=True)
+
+        self.assertTrue(result)
+        assistant._self_update.check_self_update.assert_called_once_with(
+            VERSION,
+            assistant._github,
+            assistant._download,
+            assistant._zip,
+            force=True,
+            is_bundled=True,
+            package_type='Nuitka',
+            keep_temp=True,
+            threads='',
         )
 
 

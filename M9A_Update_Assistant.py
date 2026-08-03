@@ -94,6 +94,7 @@ class M9AUpdateAssistant:
         )
 
         self.keep_temp = False
+        self.restart_threads = ''
 
     def _setup_logger(self) -> logging.Logger:
         """设置日志记录器，委托给 logger_manager.setup_logger"""
