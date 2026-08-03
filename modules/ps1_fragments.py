@@ -361,8 +361,17 @@ def generate_helper_orchestration_functions_ps1() -> str:
                 }
 
                 Set-UpdateStatus "verified" "start_normal_app" "新版验证通过，启动主程序" 100 "INFO"
+                $notDelete = Read-IniValue "Options" "not_delete"
+                $threads = Read-IniValue "Options" "threads"
+                $normalArgs = @()
+                if ($notDelete -eq "true") {
+                    $normalArgs += @('--not-delete')
+                }
+                if ($threads -match '^\d+$') {
+                    $normalArgs += @('--threads', $threads)
+                }
                 Commit-Update
-                Launch-NewVersion $target
+                Launch-NewVersion $target $normalArgs
                 exit 0
             } catch {
                 Write-Log "ERROR" "helper error: $($_.Exception.Message)"

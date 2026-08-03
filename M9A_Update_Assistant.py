@@ -399,6 +399,8 @@ class M9AUpdateAssistant:
         return self._self_update.check_self_update(
             VERSION, self._github, self._download, self._zip, force=force,
             is_bundled=self._is_bundled, package_type=self._package_type,
+            keep_temp=self.keep_temp,
+            threads=self.restart_threads,
         )
 
 
@@ -532,6 +534,9 @@ def main():
         logger = logging.getLogger("M9AUpdateAssistant")
         logger.info("正在重试自更新...")
         assistant = M9AUpdateAssistant()
+        assistant.restart_threads = args.threads
+        if args.not_delete:
+            assistant.keep_temp = True
         if args.threads:
             assistant._download.download_threads, _ = parse_download_threads(
                 args.threads,
@@ -568,6 +573,9 @@ def main():
     if args.update or args.update_force:
         print_info()
         assistant = M9AUpdateAssistant()
+        assistant.restart_threads = args.threads
+        if args.not_delete:
+            assistant.keep_temp = True
         if args.threads:
             assistant._download.download_threads, _ = parse_download_threads(
                 args.threads,
@@ -585,6 +593,7 @@ def main():
     try:
         print_info()
         assistant = M9AUpdateAssistant()
+        assistant.restart_threads = args.threads
 
         if args.threads:
             assistant._download.download_threads, _ = parse_download_threads(

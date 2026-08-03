@@ -18,7 +18,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.config_self_updater import UpdateState
 from modules.self_updater import SelfUpdater, _get_existing_retry_count
-from M9A_Update_Assistant import _cleanup_update_residue, _is_safe_recovery_runtime_dir
+from modules.version import VERSION
+from M9A_Update_Assistant import (
+    M9AUpdateAssistant,
+    _cleanup_update_residue,
+    _is_safe_recovery_runtime_dir,
+)
 
 
 class TestCleanSelfUpdateCache(unittest.TestCase):
@@ -909,6 +914,40 @@ class TestSelfUpdateVerify(unittest.TestCase):
         self.assertEqual(code, 4)
 
 
+class TestM9AUpdateAssistantSelfUpdate(unittest.TestCase):
+    """M9AUpdateAssistant 自更新编排测试。"""
+
+    def test_check_self_update_passes_keep_temp_to_self_updater(self):
+        """自更新检查应把 --not-delete 状态传给 SelfUpdater。"""
+        assistant = object.__new__(M9AUpdateAssistant)
+        assistant.config = mock.MagicMock()
+        assistant.config.self_update_enabled = True
+        assistant._self_update = mock.MagicMock()
+        assistant._self_update.check_self_update.return_value = True
+        assistant._github = mock.MagicMock()
+        assistant._download = mock.MagicMock()
+        assistant._zip = mock.MagicMock()
+        assistant._is_bundled = True
+        assistant._package_type = 'Nuitka'
+        assistant.keep_temp = True
+        assistant.restart_threads = '8'
+
+        result = assistant.check_self_update(force=True)
+
+        self.assertTrue(result)
+        assistant._self_update.check_self_update.assert_called_once_with(
+            VERSION,
+            assistant._github,
+            assistant._download,
+            assistant._zip,
+            force=True,
+            is_bundled=True,
+            package_type='Nuitka',
+            keep_temp=True,
+            threads='8',
+        )
+
+
 class TestCleanupUpdateResidue(unittest.TestCase):
     """_cleanup_update_residue 测试"""
 
@@ -1656,6 +1695,17 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
             str(path).replace('`', '``').replace('$', '`$').replace('"', '`"'),
         )
 
+    def test_helper_ps1_relaunches_normal_app_with_preserved_not_delete(self):
+        """Helper 正常启动新版程序时应恢复 --not-delete 参数。"""
+        SelfUpdater._generate_helper_ps1(self._script_paths())
+        content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
+
+        self.assertIn('Read-IniValue "Options" "not_delete"', content)
+        self.assertIn('Read-IniValue "Options" "threads"', content)
+        self.assertIn("$normalArgs += @('--not-delete')", content)
+        self.assertIn("$normalArgs += @('--threads', $threads)", content)
+        self.assertIn("Launch-NewVersion $target $normalArgs", content)
+
     def test_generated_scripts_leave_no_placeholder_tokens(self):
         """生成脚本不应残留模板占位符。"""
         paths = self._script_paths()
@@ -1700,6 +1750,56 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
                 self.assertTrue(content.startswith(b'\xef\xbb\xbf'))
                 self.assertIn(b'\r\n', content)
                 self.assertNotIn(b'\n', content.replace(b'\r\n', b''))
+
+    def test_replace_executable_writes_not_delete_option_to_state(self):
+        """保留临时文件选项应写入 UpdateState，供新版启动恢复参数。"""
+        if sys.platform != 'win32':
+            self.skipTest("仅在 Windows 上支持 subprocess.CREATE_NEW_PROCESS_GROUP")
+        program_dir = Path(self.tmpdir) / 'program'
+        program_dir.mkdir()
+        current_exe = program_dir / 'M9A_Update_Assistant.exe'
+        current_exe.write_text('old exe', encoding='utf-8')
+        tmp_new = Path(self.tmpdir) / 'downloaded.exe'
+        tmp_new.write_text('new exe', encoding='utf-8')
+        sha_path = Path(self.tmpdir) / 'downloaded.sha256'
+        sha_path.write_text('sha', encoding='ascii')
+        updater = SelfUpdater('', str(Path(self.tmpdir) / 'runtime'), logging.getLogger("TestReplaceExecutable"))
+        original_argv0 = sys.argv[0]
+        sys.argv[0] = str(current_exe)
+
+        class ReadyProcess:
+            """模拟已启动的 helper 进程。"""
+
+            returncode = None
+
+            def poll(self):
+                """返回 None 表示进程仍在运行。"""
+                return None
+
+            def kill(self):
+                """模拟终止进程。"""
+                return None
+
+        def fake_popen(args, creationflags):
+            """模拟 PowerShell 启动并创建握手锁文件。"""
+            Path(args[5]).parent.joinpath('update_started.lock').write_text('', encoding='utf-8')
+            return ReadyProcess()
+
+        try:
+            with mock.patch.object(SelfUpdater, '_get_exe_path', return_value=current_exe):
+                with mock.patch('modules.self_updater.os.getpid', return_value=12345):
+                    with mock.patch('modules.self_updater.subprocess.Popen', side_effect=fake_popen):
+                        updater._replace_executable(
+                            tmp_new, sha_path, 'v2.0.0', 'oldhash', 'newhash',
+                            keep_temp=True,
+                        )
+
+            state = UpdateState.load()
+            self.assertIsNotNone(state)
+            self.assertEqual(state.get('Options', 'not_delete'), 'true')
+        finally:
+            sys.argv[0] = original_argv0
+            _cleanup_state_file()
 
     def test_replace_executable_writes_runtime_paths_to_state(self):
         """替换流程应把 runtime 相关绝对路径写入 UpdateState。"""

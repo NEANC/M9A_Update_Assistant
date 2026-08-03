@@ -36,6 +36,7 @@ class UpdateState:
             "lock_file": "", "log_file": "", "new_file": "", "backup_file": "",
         },
         "Version": {"old_version": "", "new_version": "", "old_sha256": "", "new_sha256": ""},
+        "Options": {"not_delete": "false", "threads": ""},
         "Retry": {"retry_count": "0", "max_retry": "3"},
     }
 

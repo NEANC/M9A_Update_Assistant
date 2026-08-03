@@ -371,12 +371,15 @@ class SelfUpdater:
 
         return True
 
-    def check_self_update(self, current_version: str, gh_client: GitHubReleaseClient,
-                           download_manager: DownloadManager,
-                           zip_manager: ZipManager,
-                           force: bool = False,
-                           is_bundled: Optional[bool] = None,
-                           package_type: Optional[str] = None) -> bool:
+    def check_self_update(self, current_version: str,
+                          gh_client: GitHubReleaseClient,
+                          download_manager: DownloadManager,
+                          zip_manager: ZipManager,
+                          force: bool = False,
+                          is_bundled: Optional[bool] = None,
+                          package_type: Optional[str] = None,
+                          keep_temp: bool = False,
+                          threads: str = '') -> bool:
         """
         检查并准备自身更新
 
@@ -388,6 +391,7 @@ class SelfUpdater:
             force: 是否强制更新
             is_bundled: 外部预检测的是否为打包程序（可选，避免重复调用 detect_package_type）
             package_type: 外部预检测的打包方式（可选）
+            keep_temp: 是否保留临时文件，更新后恢复 --not-delete 参数
 
         Returns:
             bool: 是否需要退出以完成更新
@@ -530,7 +534,9 @@ class SelfUpdater:
                 self.logger.info("新版本已下载并校验通过")
 
             self._replace_executable(tmp_path, sha_path, latest_version,
-                                      old_sha256, new_sha256)
+                                      old_sha256, new_sha256,
+                                      keep_temp=keep_temp,
+                                      threads=threads)
             return True
 
         except requests.RequestException as e:
@@ -827,7 +833,9 @@ class SelfUpdater:
 
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
                              new_version: str, old_sha256: str,
-                             new_sha256: str) -> None:
+                             new_sha256: str,
+                             keep_temp: bool = False,
+                             threads: str = '') -> None:
         """
         准备替换：生成 helper.ps1 / update.ps1 → 写 INI 状态文件 → 启动 PowerShell → 握手退出
 
@@ -837,6 +845,8 @@ class SelfUpdater:
             new_version: 新版本号
             old_sha256: 旧版本 SHA256（来自 GitHub API）
             new_sha256: 新版本 SHA256
+            keep_temp: 是否保留临时文件，更新后恢复 --not-delete 参数
+            threads: 下载线程数参数，更新后恢复 --threads 参数
         """
         current_exe = self._get_exe_path()
         paths = self._build_update_runtime_paths(current_exe, new_version)
@@ -863,6 +873,8 @@ class SelfUpdater:
         state["new_version"] = new_version
         state["old_sha256"] = old_sha256
         state["new_sha256"] = new_sha256
+        state.set("Options", "not_delete", "true" if keep_temp else "false")
+        state.set("Options", "threads", threads.strip() if threads else "")
         state.set("Retry", "retry_count", _get_existing_retry_count())
         state.set("Retry", "max_retry", "3")
         state.save()
