@@ -392,6 +392,7 @@ class SelfUpdater:
             is_bundled: 外部预检测的是否为打包程序（可选，避免重复调用 detect_package_type）
             package_type: 外部预检测的打包方式（可选）
             keep_temp: 是否保留临时文件，更新后恢复 --not-delete 参数
+            threads: 下载线程数参数，更新后恢复 --threads 参数
 
         Returns:
             bool: 是否需要退出以完成更新

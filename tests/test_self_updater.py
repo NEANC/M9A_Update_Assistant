@@ -1776,7 +1776,7 @@ class TestGeneratedPs1Scripts(unittest.TestCase):
             str(path).replace('`', '``').replace('$', '`$').replace('"', '`"'),
         )
 
-    def test_helper_ps1_relaunches_normal_app_with_preserved_not_delete(self):
+    def test_helper_ps1_relaunches_normal_app_with_whitelisted_args(self):
         """Helper 正常启动新版程序时应恢复 --not-delete 参数。"""
         SelfUpdater._generate_helper_ps1(self._script_paths())
         content = self._read_generated("M9A_Update_Assistant_Update_Helper.ps1")
