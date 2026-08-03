@@ -24,6 +24,7 @@ from M9A_Update_Assistant import (
     M9AUpdateAssistant,
     _cleanup_update_residue,
     _is_safe_recovery_runtime_dir,
+    _restore_whitelisted_args_from_state,
 )
 
 
@@ -994,6 +995,38 @@ class TestM9AUpdateAssistantSelfUpdate(unittest.TestCase):
             keep_temp=True,
             threads='',
         )
+
+    def test_restore_whitelisted_args_from_state_recovers_options(self):
+        """回滚重试未透传白名单参数时，应从 UpdateState.Options 恢复。"""
+        state = UpdateState()
+        state.set("Options", "not_delete", "true")
+        state.set("Options", "threads", "8")
+        state.save()
+
+        assistant = object.__new__(M9AUpdateAssistant)
+        assistant.keep_temp = False
+        assistant.restart_threads = ''
+
+        _restore_whitelisted_args_from_state(assistant, not_delete=False, threads='')
+
+        self.assertTrue(assistant.keep_temp)
+        self.assertEqual(assistant.restart_threads, '8')
+
+    def test_restore_whitelisted_args_from_state_keeps_cli_args(self):
+        """CLI 已显式透传白名单参数时，不应被状态文件覆盖。"""
+        state = UpdateState()
+        state.set("Options", "not_delete", "true")
+        state.set("Options", "threads", "8")
+        state.save()
+
+        assistant = object.__new__(M9AUpdateAssistant)
+        assistant.keep_temp = True
+        assistant.restart_threads = '4'
+
+        _restore_whitelisted_args_from_state(assistant, not_delete=True, threads='4')
+
+        self.assertTrue(assistant.keep_temp)
+        self.assertEqual(assistant.restart_threads, '4')
 
 
 class TestCleanupUpdateResidue(unittest.TestCase):

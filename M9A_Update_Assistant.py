@@ -489,6 +489,34 @@ def _cleanup_update_residue(logger: logging.Logger, not_delete: bool = False) ->
         logger.warning(f"将跳过版本 {failed_ver} 的自动更新，等待远端发布新版本")
 
 
+def _restore_whitelisted_args_from_state(
+    assistant: "M9AUpdateAssistant",
+    not_delete: bool,
+    threads: str,
+) -> None:
+    """回滚重试时从 UpdateState.Options 恢复白名单参数
+
+    Helper 回滚后以 --retry-update 重启时未透传白名单参数，
+    需从状态文件恢复 keep_temp 与 restart_threads。
+
+    Args:
+        assistant: M9AUpdateAssistant 实例
+        not_delete: CLI 是否显式传入 --not-delete
+        threads: CLI 显式传入的 --threads 值
+    """
+    if not_delete and threads:
+        return
+    state = UpdateState.load()
+    if not state:
+        return
+    if not not_delete and state.get("Options", "not_delete", fallback="") == "true":
+        assistant.keep_temp = True
+    if not threads:
+        saved_threads = state.get("Options", "threads", fallback="")
+        if saved_threads.isdigit():
+            assistant.restart_threads = saved_threads
+
+
 def parse_command_line_args() -> argparse.Namespace:
     """解析命令行参数
 
@@ -538,6 +566,8 @@ def main():
         assistant.restart_threads = args.threads
         if args.not_delete:
             assistant.keep_temp = True
+        # 回滚重试未透传白名单参数时，从状态文件恢复
+        _restore_whitelisted_args_from_state(assistant, args.not_delete, args.threads)
         if args.threads:
             assistant._download.download_threads, _ = parse_download_threads(
                 args.threads,
