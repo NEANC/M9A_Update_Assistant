@@ -934,8 +934,8 @@ class TestM9AUpdateAssistantSelfUpdate(unittest.TestCase):
     def tearDown(self):
         """恢复工作目录与 argv[0]，清理状态文件和临时目录。"""
         os.chdir(self.original_cwd)
-        sys.argv[0] = self.original_argv0
         _cleanup_state_file()
+        sys.argv[0] = self.original_argv0
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_check_self_update_passes_keep_temp_to_self_updater(self):
