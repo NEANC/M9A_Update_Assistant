@@ -435,12 +435,12 @@ class M9AUpdater:
                 if version and _normalize_version_name(version) == _normalize_version_name(target_version):
                     self.logger.info(f"缓存 ZIP 版本 {version} 匹配: {candidate}")
                     return str(candidate)
-            self.logger.warning(f"未找到版本 {target_version} 的缓存 ZIP，将重新下载")
+            self.logger.warning(f"未在本地找到版本 {target_version} 缓存，将从 GitHub 下载")
             return None
 
         if all_zips:
             self.logger.info(f"使用文件名匹配缓存 ZIP: {all_zips[0]}")
             return str(all_zips[0])
 
-        self.logger.debug("未找到任何 Windows x86_64 CLI ZIP 文件")
+        self.logger.critical("未找到任何 Windows x86_64 CLI ZIP 文件")
         return None
