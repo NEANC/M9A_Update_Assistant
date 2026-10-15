@@ -1,3 +1,9 @@
+> [!CAUTION]
+> M9A CLI 已无后续维护，建议切换到 GUI 版本  
+> 该程序将作为 MAAFW CLI 外部更新器的演示，不再维护
+
+---
+
 > [!WARNING]
 > 本项目使用 TRAE IDE 生成与迭代
 
